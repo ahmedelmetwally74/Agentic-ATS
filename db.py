@@ -48,15 +48,6 @@ def init_db():
                 );
             """)
 
-            # Index for fast cosine similarity search
-            # IVFFlat requires at least some rows to train; we create it anyway
-            # and PostgreSQL will handle it gracefully.
-            cur.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_cv_chunks_embedding
-                ON cv_chunks USING ivfflat (embedding vector_cosine_ops)
-                WITH (lists = 100);
-            """)
-
         conn.commit()
         logger.info("Database initialized successfully.")
         print("[DB] Database initialized — table 'cv_chunks' is ready.")
