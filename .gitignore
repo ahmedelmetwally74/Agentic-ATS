@@ -28,3 +28,5 @@ Resources/
 *.docx
 *.pdf
 *.zip
+
+install_pgvector.bat
