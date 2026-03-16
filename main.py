@@ -7,6 +7,7 @@ Usage:
     python main.py <file_path> --embed               # Extract + embed + store
     python main.py --search "query text"             # RAG search
     python main.py --search "query" --section Skills # Filter by section
+    python main.py --jd-file job.txt --top-candidates 2 # Rank top candidates for a JD
     python main.py --init-db                         # Initialize database
 """
 
@@ -115,6 +116,32 @@ def main():
         help="Number of search results to return (default: 5)",
     )
     parser.add_argument(
+        "--match-job",
+        type=str,
+        default=None,
+        metavar="JOB_DESCRIPTION",
+        help="Rank top unique candidates for a full job description text",
+    )
+    parser.add_argument(
+        "--jd-file",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Read the job description from a text file and rank candidates",
+    )
+    parser.add_argument(
+        "--top-candidates",
+        type=int,
+        default=3,
+        help="Number of unique candidates to return for job matching (default: 3)",
+    )
+    parser.add_argument(
+        "--pool-size",
+        type=int,
+        default=50,
+        help="Number of raw matching chunks to retrieve before candidate grouping (default: 50)",
+    )
+    parser.add_argument(
         "--init-db",
         action="store_true",
         help="Initialize the PostgreSQL database (create tables and indexes)",
@@ -127,6 +154,61 @@ def main():
         if args.init_db:
             from db import init_db
             init_db()
+            return
+
+        # --- Candidate Matching ---
+        if args.match_job or args.jd_file:
+            if args.match_job and args.jd_file:
+                parser.error("Use either --match-job or --jd-file, not both.")
+
+            job_description = args.match_job
+            if args.jd_file:
+                if not os.path.isfile(args.jd_file):
+                    raise FileNotFoundError(f"Job description file not found: {args.jd_file}")
+                with open(args.jd_file, "r", encoding="utf-8") as f:
+                    job_description = f.read().strip()
+
+            if not job_description:
+                parser.error("A non-empty job description is required.")
+
+            from matching_service import match_candidates
+
+            result = match_candidates(
+                job_description=job_description,
+                top_candidates=args.top_candidates,
+                pool_size=args.pool_size,
+                section_filter=args.section,
+            )
+
+            print("\n" + "=" * 60)
+            print("CANDIDATE MATCHING RESULTS")
+            print("=" * 60)
+            print(f"Raw chunk matches scanned: {result['raw_chunk_matches']}")
+            print(f"Unique candidates scored: {result['candidate_count']}")
+            print(f"Top candidates requested: {args.top_candidates}")
+
+            if not result["candidates"]:
+                print("\nNo matching candidates found.")
+            else:
+                for candidate in result["candidates"]:
+                    print("\n" + "-" * 60)
+                    print(f"Rank #{candidate['rank']}")
+                    print(f"File: {candidate['file_name']}")
+                    print(f"CV ID: {candidate['cv_id']}")
+                    print(f"Score: {candidate['score']:.4f}")
+                    print("Matched sections: " + ", ".join(candidate["matched_sections"]))
+                    print("Why selected:")
+                    for reason in candidate["reasons"]:
+                        print(f"  - {reason}")
+                    print("Evidence:")
+                    for ev in candidate["evidence_chunks"]:
+                        print(
+                            f"  - [{ev['section_name']}] similarity={ev['similarity']:.4f} | "
+                            f"weighted={ev['weighted_similarity']:.4f}"
+                        )
+                        print(f"    {ev['chunk_text']}")
+
+            print("\n" + "=" * 60)
             return
 
         # --- RAG Search ---

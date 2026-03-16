@@ -119,6 +119,53 @@ def insert_chunks_batch(chunks: list[dict]):
         conn.close()
 
 
+def _run_similarity_search(query_embedding: list[float], limit: int,
+                           section_filter: str = None) -> list[dict]:
+    """Shared low-level similarity search used by both RAG and candidate matching."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            if section_filter:
+                cur.execute(
+                    """
+                    SELECT id, cv_id, file_name, section_name, chunk_index, chunk_text,
+                           1 - (embedding <=> %s::vector) AS similarity
+                    FROM cv_chunks
+                    WHERE LOWER(section_name) = LOWER(%s)
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (str(query_embedding), section_filter, str(query_embedding), limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, cv_id, file_name, section_name, chunk_index, chunk_text,
+                           1 - (embedding <=> %s::vector) AS similarity
+                    FROM cv_chunks
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (str(query_embedding), str(query_embedding), limit),
+                )
+
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": row[0],
+                    "cv_id": row[1],
+                    "file_name": row[2],
+                    "section_name": row[3],
+                    "chunk_index": row[4],
+                    "chunk_text": row[5],
+                    "similarity": float(row[6]),
+                }
+                for row in rows
+            ]
+    finally:
+        conn.close()
+
+
 def search_similar(query_embedding: list[float], top_k: int = 5,
                    section_filter: str = None) -> list[dict]:
     """
@@ -133,49 +180,26 @@ def search_similar(query_embedding: list[float], top_k: int = 5,
         List of dicts with keys: id, file_name, section_name, chunk_index,
         chunk_text, similarity.
     """
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            if section_filter:
-                cur.execute(
-                    """
-                    SELECT id, cv_id, file_name, section_name, chunk_index, chunk_text,
-                           1 - (embedding <=> %s::vector) AS similarity
-                    FROM cv_chunks
-                    WHERE LOWER(section_name) = LOWER(%s)
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s
-                    """,
-                    (str(query_embedding), section_filter,
-                     str(query_embedding), top_k),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, cv_id, file_name, section_name, chunk_index, chunk_text,
-                           1 - (embedding <=> %s::vector) AS similarity
-                    FROM cv_chunks
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s
-                    """,
-                    (str(query_embedding), str(query_embedding), top_k),
-                )
+    return _run_similarity_search(
+        query_embedding=query_embedding,
+        limit=top_k,
+        section_filter=section_filter,
+    )
 
-            rows = cur.fetchall()
-            results = []
-            for row in rows:
-                results.append({
-                    "id": row[0],
-                    "cv_id": row[1],
-                    "file_name": row[2],
-                    "section_name": row[3],
-                    "chunk_index": row[4],
-                    "chunk_text": row[5],
-                    "similarity": float(row[6]),
-                })
-            return results
-    finally:
-        conn.close()
+
+def search_similar_pool(query_embedding: list[float], pool_size: int = 50,
+                        section_filter: str = None) -> list[dict]:
+    """
+    Retrieve a larger raw pool of matching chunks for candidate ranking.
+
+    Unlike search_similar(), this is intended for downstream grouping by cv_id
+    so the returned list may contain multiple chunks from the same candidate.
+    """
+    return _run_similarity_search(
+        query_embedding=query_embedding,
+        limit=pool_size,
+        section_filter=section_filter,
+    )
 
 
 def delete_by_file(file_name: str) -> int:

@@ -1,0 +1,38 @@
+Sr. Data Science at Orange Egypt
+
+About the job
+Purpose of the job
+
+This role is responsible for leading the development and implementation of advanced analytics, machine learning models, and data driven solutions to drive business insights and strategic decision-making. It involves designing and optimizing predictive models, uncovering patterns in large datasets, and collaborating with cross-functional teams to enhance data-driven decision making.
+
+Duties And Responsibilities
+
+Lead AI/ML initiatives, driving innovation and strategic alignment with business objectives.
+Develop, architect and optimize large-scale deep learning and generative AI solutions.
+Build robust pipelines for continuous model deployment, monitoring, and governance.
+Research and implement cutting-edge AI advancements
+Mentor and guide junior and mid-level data scientists, fostering a culture of innovation.
+
+Job specification
+
+Education
+
+Bachelors degree in Computer Science, Engineering or Statistics.
+
+Skills And Abilities
+
+Fluent English and Arabic is a must
+Ability to work in a fast-paced, dynamic environment, handling multiple concurrent
+Detail-oriented and process oriented.
+Flexibility in dealing with people with diverse working styles
+Analytical Mindset
+Business Acumen
+Solid experience in classical ML modelling
+Solid experience in deep learning architectures.
+Experience in Generative AI (LLMs, GANs, diffusion models..etc)
+Knowledge in MLOps, including model drift detection, and scaling ML systems.
+Leadership skills with experience in managing business stakeholders and projects
+Experience with SQL
+4+ years of experience in AI, machine learning, and deep learning is preferred
+Experience with reinforcement learning and foundation models is a plus
+Contributions to AI research, patents, or open-source projects is a plus
