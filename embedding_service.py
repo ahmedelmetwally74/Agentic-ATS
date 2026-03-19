@@ -1,6 +1,6 @@
 """
 AgenticATS - Embedding Service
-Local embedding generation, CV section parsing, sub-chunking, and ingestion pipeline.
+Jina v5 embeddings via llama-server HTTP API, CV section parsing, sub-chunking, and ingestion pipeline.
 """
 
 import json
@@ -9,7 +9,7 @@ import os
 import re
 import uuid
 
-from sentence_transformers import SentenceTransformer
+import requests
 
 from db import insert_chunks_batch, delete_by_file
 
@@ -17,38 +17,65 @@ from db import insert_chunks_batch, delete_by_file
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Lazy-loaded singleton model
+# Jina v5 embedding endpoint (llama-server)
 # ---------------------------------------------------------------------------
-_model = None
-MODEL_NAME = "all-MiniLM-L6-v2"
-
-
-def _get_model() -> SentenceTransformer:
-    """Load the embedding model once and cache it."""
-    global _model
-    if _model is None:
-        print(f"[EMBED] Loading model '{MODEL_NAME}' (first time may download)...")
-        _model = SentenceTransformer(MODEL_NAME)
-        print(f"[EMBED] Model loaded successfully.")
-    return _model
+EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://127.0.0.1:7999/v1/embeddings")
 
 
 # ---------------------------------------------------------------------------
-# Embedding generation
+# Embedding generation via HTTP
 # ---------------------------------------------------------------------------
 
-def generate_embedding(text: str) -> list[float]:
-    """Generate a single embedding vector for the given text."""
-    model = _get_model()
-    embedding = model.encode(text, normalize_embeddings=True)
-    return embedding.tolist()
+def generate_embedding(text: str, prefix: str = "Document: ") -> list[float]:
+    """
+    Generate a single embedding vector via the Jina v5 llama-server endpoint.
+
+    Args:
+        text: The text to embed.
+        prefix: Prefix to prepend — "Document: " for CV chunks, "Query: " for JD/search.
+
+    Returns:
+        Embedding vector as a list of floats.
+    """
+    prefixed = f"{prefix}{text}"
+    response = requests.post(
+        EMBEDDING_API_URL,
+        headers={"Content-Type": "application/json"},
+        json={"input": [prefixed]},
+        timeout=120,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data["data"][0]["embedding"]
 
 
-def generate_embeddings(texts: list[str]) -> list[list[float]]:
-    """Batch-generate embeddings for multiple texts."""
-    model = _get_model()
-    embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=True)
-    return [e.tolist() for e in embeddings]
+def generate_embeddings(texts: list[str], prefix: str = "Document: ") -> list[list[float]]:
+    """
+    Batch-generate embeddings for multiple texts via the Jina v5 llama-server endpoint.
+
+    Args:
+        texts: List of texts to embed.
+        prefix: Prefix to prepend — "Document: " for CV chunks, "Query: " for JD/search.
+
+    Returns:
+        List of embedding vectors.
+    """
+    if not texts:
+        return []
+
+    prefixed = [f"{prefix}{t}" for t in texts]
+    response = requests.post(
+        EMBEDDING_API_URL,
+        headers={"Content-Type": "application/json"},
+        json={"input": prefixed},
+        timeout=300,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    # Sort by index to guarantee order matches input
+    sorted_data = sorted(data["data"], key=lambda x: x["index"])
+    return [item["embedding"] for item in sorted_data]
 
 
 # ---------------------------------------------------------------------------
@@ -87,9 +114,9 @@ def _build_section_pattern(headings: list[str]) -> re.Pattern:
         rf"^\s*"                         # leading whitespace
         rf"(?:[\d]+[.\)]\s*)?"           # optional numbering: "1." or "2)"
         rf"(?:[•\-–—\*]\s*)?"            # optional bullet
-        rf"(?:[-=]{2,}\s*)?"             # optional separator: "---" or "==="
+        rf"(?:[-=]{{2,}}\s*)?"           # optional separator: "---" or "==="
         rf"({alternatives})"             # capture the heading
-        rf"\s*[:|\-–—]?\s*$",            # optional trailing colon/dash
+        rf"\s*[:|–—\-]?\s*$",            # optional trailing colon/dash
         re.IGNORECASE | re.MULTILINE,
     )
     return pattern
@@ -183,7 +210,7 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
       1. Extract text from the PDF/DOCX (using existing extract_text)
       2. Parse into semantic sections
       3. Sub-chunk long sections
-      4. Generate embeddings (batch)
+      4. Generate embeddings (batch) with "Document: " prefix
       5. Store in PostgreSQL
 
     Args:
@@ -191,7 +218,7 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
         replace_existing: If True, delete existing chunks for this file before inserting.
 
     Returns:
-        Total number of chunks stored.
+        Tuple of (cv_id, chunk_count).
     """
     from main import extract_text  # import here to avoid circular imports
 
@@ -221,9 +248,9 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
 
     print(f"[INGEST] Prepared {len(records)} chunks across {len(sections)} sections.")
 
-    # Step 4: Generate embeddings (batch)
+    # Step 4: Generate embeddings (batch) with "Document: " prefix for CV chunks
     texts_to_embed = [r["chunk_text"] for r in records]
-    embeddings = generate_embeddings(texts_to_embed)
+    embeddings = generate_embeddings(texts_to_embed, prefix="Document: ")
     for record, emb in zip(records, embeddings):
         record["embedding"] = emb
 
@@ -237,3 +264,45 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
     print(f"[INGEST] Successfully stored {len(records)} chunks in the database.")
 
     return cv_id, len(records)
+
+
+def ingest_cv_folder(folder_path: str, replace_existing: bool = True) -> list[tuple[str, str, int]]:
+    """
+    Ingest all CV files (.pdf, .docx) in a folder directory.
+
+    Args:
+        folder_path: Path to the folder containing CV files.
+        replace_existing: If True, delete existing chunks for each file before inserting.
+
+    Returns:
+        List of tuples: [(file_name, cv_id, chunk_count), ...]
+    """
+    if not os.path.isdir(folder_path):
+        raise NotADirectoryError(f"Not a directory: {folder_path}")
+
+    supported_extensions = {".pdf", ".docx"}
+    results = []
+
+    files = sorted(os.listdir(folder_path))
+    cv_files = [
+        f for f in files
+        if os.path.isfile(os.path.join(folder_path, f))
+        and os.path.splitext(f)[1].lower() in supported_extensions
+    ]
+
+    if not cv_files:
+        print(f"[INGEST] No .pdf or .docx files found in: {folder_path}")
+        return results
+
+    print(f"[INGEST] Found {len(cv_files)} CV files in '{folder_path}'")
+
+    for file_name in cv_files:
+        file_path = os.path.join(folder_path, file_name)
+        try:
+            cv_id, chunk_count = ingest_cv(file_path, replace_existing=replace_existing)
+            results.append((file_name, cv_id, chunk_count))
+        except Exception as e:
+            print(f"[ERROR] Failed to ingest '{file_name}': {e}")
+
+    print(f"\n[INGEST] Folder ingestion complete: {len(results)}/{len(cv_files)} files processed.")
+    return results

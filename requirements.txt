@@ -4,6 +4,7 @@ PyPDF2==3.0.1
 openpyxl==3.1.2
 lxml==5.4.0
 python-redlines @ git+https://github.com/JSv4/Python-Redlines@254e742b4a9099d753fdd59cbc78fc67e2d3b940
-sentence-transformers
+requests
+fpdf2
 psycopg2-binary
 python-dotenv

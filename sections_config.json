@@ -43,5 +43,14 @@
         "Professional Development",
         "Extracurricular Activities",
         "Activities"
-    ]
+    ],
+    "section_weights": {
+        "Experience": 4,
+        "Skills": 3,
+        "Education": 2,
+        "Projects": 2,
+        "Certifications": 1,
+        "Summary": 1,
+        "Languages": 0.5
+    }
 }

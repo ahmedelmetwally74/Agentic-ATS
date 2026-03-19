@@ -1,14 +1,16 @@
 """
 AgenticATS - Main Entry Point
 Extract text from PDF or Word documents, embed into PostgreSQL, and search via RAG.
+Supports two analysis modes: employer (candidate ranking) and client (CV improvement).
 
 Usage:
-    python main.py <file_path>                       # Extract text only
-    python main.py <file_path> --embed               # Extract + embed + store
-    python main.py --search "query text"             # RAG search
-    python main.py --search "query" --section Skills # Filter by section
-    python main.py --jd-file job.txt --top-candidates 2 # Rank top candidates for a JD
-    python main.py --init-db                         # Initialize database
+    python main.py <file_path>                              # Extract text only
+    python main.py <file_path> --embed                      # Extract + embed + store (single file)
+    python main.py --embed <folder_path>                    # Embed all CVs in a folder
+    python main.py --search "query text"                    # RAG search
+    python main.py --mode employer --jd-file job.txt        # Employer: rank candidates + interview questions
+    python main.py --mode client --jd-file job.txt          # Client: CV improvement suggestions
+    python main.py --init-db                                # Initialize database
 """
 
 import argparse
@@ -16,6 +18,20 @@ import os
 import sys
 
 from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+
+def _clean_text(text: str) -> str:
+    """Aggressively clean text of all control characters and normalize whitespace for terminal printing."""
+    if not text:
+        return ""
+    # Treat all whitespace including \r \n \t as space, then join back
+    cleaned = " ".join(text.split())
+    # Remove any non-printable characters for terminal safety
+    cleaned = "".join(c for c in cleaned if c.isprintable())
+    return cleaned.strip()
 
 from document_service import (
     extract_text_from_pdf_sync,
@@ -72,13 +88,16 @@ def extract_text(file_path: str) -> str:
 def main():
     parser = argparse.ArgumentParser(
         prog="AgenticATS",
-        description="Extract text from PDF/Word documents, embed into PostgreSQL, and RAG search.",
+        description=(
+            "Extract text from PDF/Word documents, embed into PostgreSQL, "
+            "and perform candidate matching with LLM-powered analysis."
+        ),
     )
     parser.add_argument(
         "file_path",
         nargs="?",
         default=None,
-        help="Path to the input file (.pdf or .docx)",
+        help="Path to the input file (.pdf or .docx) for text extraction",
     )
     parser.add_argument(
         "-o", "--output",
@@ -92,8 +111,10 @@ def main():
     )
     parser.add_argument(
         "--embed",
-        action="store_true",
-        help="Extract text, chunk by sections, embed, and store in PostgreSQL",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Embed a CV file or all CVs in a folder into PostgreSQL (supports .pdf and .docx)",
     )
     parser.add_argument(
         "--search",
@@ -130,6 +151,13 @@ def main():
         help="Read the job description from a text file and rank candidates",
     )
     parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["employer", "client"],
+        default=None,
+        help="Analysis mode: 'employer' for candidate ranking or 'client' for CV improvement",
+    )
+    parser.add_argument(
         "--top-candidates",
         type=int,
         default=3,
@@ -140,6 +168,13 @@ def main():
         type=int,
         default=50,
         help="Number of raw matching chunks to retrieve before candidate grouping (default: 50)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=".",
+        metavar="DIR",
+        help="Directory to save PDF analysis reports (default: current directory)",
     )
     parser.add_argument(
         "--init-db",
@@ -161,6 +196,9 @@ def main():
             if args.match_job and args.jd_file:
                 parser.error("Use either --match-job or --jd-file, not both.")
 
+            if not args.mode:
+                parser.error("--mode is required for matching. Use --mode employer or --mode client.")
+
             job_description = args.match_job
             if args.jd_file:
                 if not os.path.isfile(args.jd_file):
@@ -178,14 +216,27 @@ def main():
                 top_candidates=args.top_candidates,
                 pool_size=args.pool_size,
                 section_filter=args.section,
+                mode=args.mode,
+                output_dir=args.output_dir,
             )
 
             print("\n" + "=" * 60)
-            print("CANDIDATE MATCHING RESULTS")
+            print(f"CANDIDATE MATCHING RESULTS ({args.mode.upper()} MODE)")
             print("=" * 60)
             print(f"Raw chunk matches scanned: {result['raw_chunk_matches']}")
             print(f"Unique candidates scored: {result['candidate_count']}")
             print(f"Top candidates requested: {args.top_candidates}")
+
+            if result.get("requirements"):
+                print("\n[Extracted Job Requirements]")
+                for section, reqs in result["requirements"].items():
+                    if reqs:
+                        print(f"  {section}:")
+                        for req in reqs:
+                            print(f"    - {_clean_text(req)}")
+            
+            if result.get("jd_report"):
+                print(f"\nJD Analysis Report: {_clean_text(result['jd_report'])}")
 
             if not result["candidates"]:
                 print("\nNo matching candidates found.")
@@ -196,17 +247,30 @@ def main():
                     print(f"File: {candidate['file_name']}")
                     print(f"CV ID: {candidate['cv_id']}")
                     print(f"Score: {candidate['score']:.4f}")
-                    print("Matched sections: " + ", ".join(candidate["matched_sections"]))
-                    print("Why selected:")
-                    for reason in candidate["reasons"]:
-                        print(f"  - {reason}")
-                    print("Evidence:")
-                    for ev in candidate["evidence_chunks"]:
-                        print(
-                            f"  - [{ev['section_name']}] similarity={ev['similarity']:.4f} | "
-                            f"weighted={ev['weighted_similarity']:.4f}"
-                        )
-                        print(f"    {ev['chunk_text']}")
+                    print("Matched sections: " + _clean_text(", ".join(candidate["matched_sections"])))
+
+                    print(f"\n[Summary]\n{_clean_text(candidate.get('summary', ''))}")
+
+                    print("\n[Reasons]")
+                    for reason in candidate.get("reasons", []):
+                        print(f"  * {_clean_text(reason)}")
+
+                    if args.mode == "employer":
+                        print("\n[Interview Questions]")
+                        for q in candidate.get("questions", []):
+                            print(f"  ? {_clean_text(q)}")
+                    else:
+                        print("\n[CV Improvement Suggestions]")
+                        for s in candidate.get("suggestions", []):
+                            print(f"  + {_clean_text(s)}")
+
+                    print(f"\nPDF Report: {_clean_text(candidate.get('report_pdf', 'N/A'))}")
+
+            if result.get("pdf_reports"):
+                print("\n" + "=" * 60)
+                print("PDF REPORTS GENERATED:")
+                for pdf_path in result["pdf_reports"]:
+                    print(f"  -> {pdf_path}")
 
             print("\n" + "=" * 60)
             return
@@ -231,18 +295,36 @@ def main():
             print("=" * 60)
             return
 
-        # --- File processing (extract / embed) ---
-        if not args.file_path:
-            parser.error("file_path is required for extraction and embedding.")
-
+        # --- Embedding (mode-independent) ---
         if args.embed:
-            # Full RAG ingestion pipeline
-            from embedding_service import ingest_cv
-            cv_id, chunk_count = ingest_cv(args.file_path)
-            print(f"\n[SUCCESS] Ingested {chunk_count} chunks into the database. (CV ID: {cv_id})")
+            embed_path = args.embed
+
+            if os.path.isdir(embed_path):
+                # Folder mode: ingest all CVs in the directory
+                from embedding_service import ingest_cv_folder
+                results = ingest_cv_folder(embed_path)
+
+                print("\n" + "=" * 60)
+                print("FOLDER INGESTION RESULTS")
+                print("=" * 60)
+                for file_name, cv_id, chunk_count in results:
+                    print(f"  {file_name}: {chunk_count} chunks (CV ID: {cv_id})")
+                print(f"\nTotal: {len(results)} files ingested.")
+                print("=" * 60)
+            elif os.path.isfile(embed_path):
+                # Single file mode
+                from embedding_service import ingest_cv
+                cv_id, chunk_count = ingest_cv(embed_path)
+                print(f"\n[SUCCESS] Ingested {chunk_count} chunks into the database. (CV ID: {cv_id})")
+            else:
+                raise FileNotFoundError(f"Path not found: {embed_path}")
             return
 
         # --- Default: extract and display text ---
+        if not args.file_path:
+            parser.error("file_path is required for extraction. "
+                         "Use --embed for ingestion or --search for retrieval.")
+
         text = extract_text(args.file_path)
 
         if args.clean:

@@ -11,7 +11,7 @@ from psycopg2.extras import execute_values
 
 logger = logging.getLogger(__name__)
 
-VECTOR_DIM = 384  # all-MiniLM-L6-v2 output dimensions
+VECTOR_DIM = 1024  # Jina v5 output dimensions
 
 
 def get_connection():
@@ -216,5 +216,40 @@ def delete_by_file(file_name: str) -> int:
             deleted = cur.rowcount
         conn.commit()
         return deleted
+    finally:
+        conn.close()
+
+
+def search_best_chunk_for_cv(cv_id: str, query_embedding: list[float]) -> dict | None:
+    """
+    Find the single most similar chunk for a specific candidate (cv_id).
+    Used in the Map phase of the Map-Reduce matching process.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, cv_id, file_name, section_name, chunk_index, chunk_text,
+                       1 - (embedding <=> %s::vector) AS similarity
+                FROM cv_chunks
+                WHERE cv_id = %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT 1
+                """,
+                (str(query_embedding), cv_id, str(query_embedding)),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "cv_id": row[1],
+                "file_name": row[2],
+                "section_name": row[3],
+                "chunk_index": row[4],
+                "chunk_text": row[5],
+                "similarity": float(row[6]),
+            }
     finally:
         conn.close()

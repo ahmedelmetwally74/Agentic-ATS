@@ -26,7 +26,7 @@ def retrieve_context(query: str, top_k: int = 5,
         id, file_name, section_name, chunk_index, chunk_text, similarity.
     """
     print(f"[RAG] Embedding query: '{query}'")
-    query_embedding = generate_embedding(query)
+    query_embedding = generate_embedding(query, prefix="Query: ")
 
     results = search_similar(query_embedding, top_k=top_k,
                              section_filter=section_filter)

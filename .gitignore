@@ -30,3 +30,6 @@ Resources/
 *.zip
 
 install_pgvector.bat
+.gitignore
+models
+llama.cpp
