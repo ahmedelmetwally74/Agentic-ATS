@@ -1,31 +1,63 @@
 # AgenticATS
 
-AgenticATS is a command-line project for reading CVs from PDF or DOCX files, extracting their structural sections, generating embeddings, storing those embeddings in PostgreSQL with `pgvector`, and performing LLM-powered candidate matching.
+AgenticATS is a local command-line project for reading CVs from PDF or DOCX files, extracting their sections, generating embeddings, storing them in PostgreSQL with `pgvector`, and analyzing CVs against a job description using a locally served LLM.
 
-The latest version has been rebuilt to use **llama-server** for both structured embeddings (Jina v5) and intelligent reasoning (Qwen3.5-2B). It supports extracting, ranking, and generating personalized PDF reports for candidates against a job description.
+The project uses two local `llama-server` instances:
+- one for **embeddings**
+- one for **chat / reasoning**
+
+It supports two workflows:
+- **Company mode**: rank multiple stored candidates against a job description
+- **Applicant mode**: analyze one specific CV against a job description and generate CV improvement suggestions
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
-- **Jina v5 Embeddings**: Uses high-quality 1024-dimensional embeddings served locally via `llama-server`.
-- **LLM Reasoning**: Uses Qwen3.5-2B to generate natural language explanations of match quality.
-- **Two Analysis Modes**:
-  - **Company Mode**: Upload a folder of CVs. Match against a job description to rank top candidates. Generates a PDF report per candidate with specific reasons they fit the role and custom **interview questions** to ask them.
-  - **Applicant Mode**: Upload your own CV. Match against a job description to receive a PDF report analyzing your strengths and providing targeted **CV improvement suggestions** (missing skills, project ideas, gaps).
-- **Automated PDF Reports**: Match results aren't just printed to the terminal; they are saved as clean, formatted PDF reports per candidate for easy sharing or review.
+- Local **Jina v5** embeddings served through `llama-server`
+- Local **Qwen** chat analysis served through `llama-server`
+- PostgreSQL + `pgvector` storage for CV chunks
+- Section-aware CV parsing and matching
+- PDF reports for both job description analysis and final match analysis
+- Two analysis modes:
+  - **Company mode** for candidate ranking
+  - **Applicant mode** for CV improvement
 
 ---
 
 ## What the project does
 
-1. Read a CV file (`.pdf` or `.docx`) or a whole folder of them.
-2. Extract text and detect CV sections (Work Experience, Education, Technical Skills, etc.).
-3. Split sections into chunks and embed them via `llama-server` (Jina v5).
-4. Store the vectors in PostgreSQL (`pgvector`).
-5. Rank stored candidates against a full job description.
-6. Use Qwen3.5-2B to analyze the match and generate insights.
-7. Save the final analysis to a `.pdf` report.
+1. Read a CV file (`.pdf` or `.docx`) or a folder of CVs.
+2. Extract text and split the CV into logical sections.
+3. Chunk the extracted sections.
+4. Generate embeddings for those chunks.
+5. Store the vectors in PostgreSQL with `pgvector`.
+6. Compare stored CV data against a job description.
+7. Use a local LLM to generate structured match analysis.
+8. Save the result as PDF reports.
+
+---
+
+## Analysis Modes
+
+### Company Mode
+Use this mode when you want to rank multiple candidates against one job description.
+
+Output includes:
+- ranking overview
+- why a candidate fits the role
+- things to keep in mind
+- interview questions
+
+### Applicant Mode
+Use this mode when you want to evaluate one specific CV against one job description.
+
+Output includes:
+- section-by-section comparison
+- missing skills / tools / experience / education
+- practical CV improvement suggestions
+
+Applicant mode is designed to analyze **one CV only**.
 
 ---
 
@@ -34,24 +66,20 @@ The latest version has been rebuilt to use **llama-server** for both structured 
 Before running the project, make sure you have:
 
 1. **Python 3.10+**
-2. **PostgreSQL** with the **pgvector** extension installed.
-3. Two running instances of **llama-server**:
-   - Instance 1: Running a **Jina v5** embedding model at `http://127.0.0.1:7999/v1/embeddings`
-   - Instance 2: Running a **Qwen3.5-2B** chat model at `http://localhost:8000/v1/chat/completions`
+2. **PostgreSQL** with the **pgvector** extension installed
+3. A working Python virtual environment
+4. Two running instances of **llama-server**:
+   - **Embedding server** on `http://127.0.0.1:7999/v1/embeddings`
+   - **Chat server** on `http://127.0.0.1:8000/v1/chat/completions`
 
-*(To install `pgvector` on Windows, you can use the included `install_pgvector.bat` script.)*
+> On Windows, you can use the provided `install_pgvector.bat` helper if needed.
 
 ---
 
-## Installation & Setup
+## Environment Variables
 
-1. **Install Python dependencies**:
-```bash
-pip install -r requirements.txt
-```
+Create a `.env` file and configure:
 
-2. **Configure Environment Variables**:
-Copy `.env.example` to `.env` and configure your Postgres connection and API URLs:
 ```env
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
@@ -60,86 +88,227 @@ POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your-password
 
 EMBEDDING_API_URL=http://127.0.0.1:7999/v1/embeddings
-LLM_API_URL=http://localhost:8000/v1/chat/completions
+LLM_API_URL=http://127.0.0.1:8000/v1/chat/completions
 ```
 
-3. **Initialize the Database**:
-Run this once to create the `vector` extension and the `cv_chunks` table (configured for 1024-dimension Jina vectors).
-```cmd
+---
+
+## Installation
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Initialize the database:
+
+```bash
 python main.py --init-db
 ```
 
-*> Note: If you have an older version of this project using 384-dimension vectors, you must drop the old `cv_chunks` table before running `--init-db`.*
+> If you previously used an older vector dimension schema, recreate the `cv_chunks` table before reinitializing.
 
 ---
 
-## CLI Usage Guide
+## Local Runtime Setup
 
-### 1) Company Mode (Candidate Ranking)
+Open **three terminals**.
 
-**Step A: Ingest a folder of CVs**
-You can point `--embed` directly to a directory. The system will process all `.pdf` and `.docx` files it finds.
-```cmd
+### Terminal 1 - Embedding Server
+
+```powershell
+cd "C:\Users\z0053beh\Downloads"
+.\llama_build\llama-server.exe -m .\models\v5-small-retrieval-Q8_0.gguf --embeddings --port 7999 --host 127.0.0.1
+```
+
+This server handles:
+- embeddings
+- retrieval
+- vector search
+
+---
+
+### Terminal 2 - Chat / LLM Server
+
+```powershell
+cd "C:\Users\z0053beh\Downloads"
+.\llama_build\llama-server.exe -m .\models\Qwen3.5-0.8B-Q8_0.gguf --port 8000 --host 127.0.0.1 --reasoning off
+```
+
+Important:
+- make sure the log shows `thinking = 0`
+- if `thinking = 1`, structured JSON output may fail in applicant or company analysis
+
+---
+
+### Terminal 3 - Project Terminal
+
+```powershell
+cd "D:\Agentic-ATS"
+.\venv\Scripts\activate
+```
+
+Use this terminal for all project commands.
+
+---
+
+## Core CLI Commands
+
+### 1) Embed a Single CV
+
+```powershell
+python main.py --embed "D:\Agentic-ATS\Resources\Ahmed El-Metwally CV 2026.pdf"
+```
+
+Use this when you want to ingest one CV into PostgreSQL.
+
+---
+
+### 2) Embed a Folder of CVs
+
+```powershell
 python main.py --embed ".\Resources\CandidatesFolder"
 ```
 
-**Step B: Match Job Description & Generate PDF Reports**
-Specify `--mode company` and provide the path to your Job Description text file.
-```cmd
+Use this for company mode when you want to ingest multiple CVs at once.
+
+---
+
+### 3) Basic Retrieval Test
+
+```powershell
+python main.py --search "Python machine learning deep learning" --top-k 5
+```
+
+This is useful for checking whether:
+- embeddings are working
+- vectors are stored correctly
+- retrieval is returning relevant chunks
+
+---
+
+### 4) Company Mode
+
+```powershell
 python main.py --mode company --jd-file ".\job_description.txt" --top-candidates 3 --output-dir ".\Reports"
 ```
-*Output*: A ranked terminal list + 3 PDF reports containing reasons for selection and suggested interview questions.
+
+Expected output:
+- ranked candidates in the terminal
+- one JD analysis PDF
+- one PDF report per selected candidate
 
 ---
 
-### 2) Applicant Mode (CV Improvement)
+### 5) Applicant Mode
 
-**Step A: Ingest the Applicant's CV**
-```cmd
-python main.py --embed ".\Resources\My_CV.pdf"
+```powershell
+python main.py --mode applicant --cv-id "5a7c3e36-fae7-4fa9-b21f-01bfd2a78796" --jd-file "D:\Agentic-ATS\orange_sr_data_science_jd.txt" --output-dir "D:\Agentic-ATS\Reports-applicant"
 ```
 
-**Step B: Analyze Against Job Description**
-Specify `--mode applicant` and provide the target Job Description.
-```cmd
-python main.py --mode applicant --jd-file ".\target_role.txt" --output-dir ".\Reports"
-```
-*Output*: A PDF report detailing current strengths and actionable suggestions for how to improve the CV for this specific role.
+Expected output:
+- one applicant analysis in the terminal
+- one JD analysis PDF
+- one applicant PDF report
+
+> Applicant mode should be used with a specific `cv_id` for one stored CV.
 
 ---
 
-### 3) Text Extraction & Standard Search
+## Output Files
 
-**View raw extracted text from a CV:**
-```cmd
-python main.py ".\Resources\My_CV.pdf"
-```
+Typical output locations:
 
-**Save extracted text to a Word Document:**
-```cmd
-python main.py ".\Resources\My_CV.pdf" -o ".\Extracted_CV.docx"
-```
+### Company mode
+- `Reports/job_description_analysis.pdf`
+- one analysis PDF per ranked candidate
 
-**Run a simple RAG chunk search (no LLM, just vector retrieval):**
-```cmd
-python main.py --search "machine learning algorithms" --top-k 5
-```
+### Applicant mode
+- `Reports-applicant/job_description_analysis.pdf`
+- `Reports-applicant/<CV name>_analysis.pdf`
 
-**Search specifically within technical skills:**
-```cmd
-python main.py --search "Python and SQL" --section "Technical Skills"
-```
+---
+
+## Debugging Tips
+
+### If `--search` works but applicant/company mode fails
+Check the chat server first.
+
+The chat server must:
+- be running on port `8000`
+- use `--reasoning off`
+- show `thinking = 0`
+
+### If you see `LLM returned empty content`
+That usually means the chat server is still returning reasoning output instead of normal `content`.
+
+### If retrieval quality looks wrong
+Check:
+- embedding server is running on `7999`
+- PostgreSQL is up
+- the CV was actually embedded
+- the correct `cv_id` is being used in applicant mode
 
 ---
 
 ## Project Structure Overview
 
-- `main.py`: The CLI entry point. Handles arguments and orchestrates the flow.
-- `embedding_service.py`: Calls the local Jina v5 embedding API. Parses CV text into sections and chunks. Prepares the "Document: "/"Query: " patterns required by Jina.
-- `llm_service.py`: Calls local Qwen3.5-2B for Company/Applicant contextual analysis.
-- `report_service.py`: Generates the formatted PDF analysis reports.
-- `matching_service.py`: Executes the candidate retrieval pool, scores them section by section, and prepares data for the LLM.
-- `rag_service.py`: Simple chunk retrieval for debugging or standard search.
-- `db.py`: Postgres / pgvector connection pool and queries.
-- `document_service.py`: Core PyMuPDF & docx extraction logic.
-- `sections_config.json`: The heuristic rules for identifying CV sections like "Work Experience" or "Skills."
+- `main.py` - CLI entry point and orchestration
+- `embedding_service.py` - CV parsing, chunking, embedding calls, ingestion helpers
+- `llm_service.py` - job description decomposition, section analysis, synthesis
+- `matching_service.py` - company ranking flow and applicant single-CV flow
+- `report_service.py` - PDF generation
+- `rag_service.py` - retrieval-only search flow
+- `db.py` - PostgreSQL / `pgvector` queries and helpers
+- `document_service.py` - raw PDF / DOCX extraction logic
+- `sections_config.json` - section detection rules and weights
+
+---
+
+## Recommended Local Workflow
+
+### For company mode
+1. Start the embedding server
+2. Start the chat server with `--reasoning off`
+3. Initialize DB if needed
+4. Embed a folder of CVs
+5. Run company mode with a JD file
+
+### For applicant mode
+1. Start the embedding server
+2. Start the chat server with `--reasoning off`
+3. Embed the applicant CV if needed
+4. Use the stored `cv_id`
+5. Run applicant mode with the target JD file
+
+---
+
+## Notes
+
+- The current local setup uses `Qwen3.5-0.8B-Q8_0.gguf` for chat.
+- The applicant flow is functional, but output quality may still improve with prompt tuning or a larger local chat model.
+- The embedding setup is currently stable and suitable for retrieval.
+
+---
+
+## Example Git Workflow
+
+Create and switch to a feature branch:
+
+```powershell
+git checkout -b ahmed
+```
+
+Stage and commit changes:
+
+```powershell
+git add .
+git commit -m "Refine applicant mode flow, prompts, and reporting"
+```
+
+Push the branch:
+
+```powershell
+git push -u origin ahmed
+```
