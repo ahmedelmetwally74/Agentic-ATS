@@ -1,15 +1,15 @@
 """
 AgenticATS - Main Entry Point
 Extract text from PDF or Word documents, embed into PostgreSQL, and search via RAG.
-Supports two analysis modes: employer (candidate ranking) and client (CV improvement).
+Supports two analysis modes: company (candidate ranking) and applicant (CV improvement).
 
 Usage:
     python main.py <file_path>                              # Extract text only
     python main.py <file_path> --embed                      # Extract + embed + store (single file)
     python main.py --embed <folder_path>                    # Embed all CVs in a folder
     python main.py --search "query text"                    # RAG search
-    python main.py --mode employer --jd-file job.txt        # Employer: rank candidates + interview questions
-    python main.py --mode client --jd-file job.txt          # Client: CV improvement suggestions
+    python main.py --mode company --jd-file job.txt         # Company: rank candidates + interview questions
+    python main.py --mode applicant --jd-file job.txt       # Applicant: CV improvement suggestions
     python main.py --init-db                                # Initialize database
 """
 
@@ -18,10 +18,10 @@ import os
 import sys
 
 from dotenv import load_dotenv
+from document_utils import normalize_text_basic, clean_extracted_text
 
 # Load environment variables from .env file
 load_dotenv()
-
 
 def _clean_text(text: str) -> str:
     """Aggressively clean text of all control characters and normalize whitespace for terminal printing."""
@@ -39,11 +39,6 @@ from document_service import (
     pdf_has_text,
     save_text_to_docx,
 )
-from document_utils import normalize_text_basic, clean_extracted_text
-
-# Load environment variables from .env file
-load_dotenv()
-
 
 def extract_text(file_path: str) -> str:
     """
@@ -153,9 +148,9 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["employer", "client"],
+        choices=["company", "applicant"],
         default=None,
-        help="Analysis mode: 'employer' for candidate ranking or 'client' for CV improvement",
+        help="Analysis mode: 'company' for candidate ranking or 'applicant' for CV improvement",
     )
     parser.add_argument(
         "--top-candidates",
@@ -181,6 +176,13 @@ def main():
         action="store_true",
         help="Initialize the PostgreSQL database (create tables and indexes)",
     )
+    parser.add_argument(
+        "--cv-id",
+        type=str,
+        default=None,
+        metavar="CV_ID",
+        help="Required for applicant mode: analyze one specific CV only",
+    )
 
     args = parser.parse_args()
 
@@ -197,7 +199,7 @@ def main():
                 parser.error("Use either --match-job or --jd-file, not both.")
 
             if not args.mode:
-                parser.error("--mode is required for matching. Use --mode employer or --mode client.")
+                parser.error("--mode is required for matching. Use --mode company or --mode applicant.")
 
             job_description = args.match_job
             if args.jd_file:
@@ -209,23 +211,37 @@ def main():
             if not job_description:
                 parser.error("A non-empty job description is required.")
 
-            from matching_service import match_candidates
+            from matching_service import match_candidates, analyze_applicant_cv
 
-            result = match_candidates(
-                job_description=job_description,
-                top_candidates=args.top_candidates,
-                pool_size=args.pool_size,
-                section_filter=args.section,
-                mode=args.mode,
-                output_dir=args.output_dir,
-            )
+            if args.mode == "company":
+                result = match_candidates(
+                    job_description=job_description,
+                    top_candidates=args.top_candidates,
+                    pool_size=args.pool_size,
+                    section_filter=args.section,
+                    mode="company",
+                    output_dir=args.output_dir,
+                )
+            else:
+                if not args.cv_id:
+                    parser.error("--cv-id is required for applicant mode.")
+
+                result = analyze_applicant_cv(
+                    job_description=job_description,
+                    cv_id=args.cv_id,
+                    section_filter=args.section,
+                    output_dir=args.output_dir,
+                )
 
             print("\n" + "=" * 60)
             print(f"CANDIDATE MATCHING RESULTS ({args.mode.upper()} MODE)")
             print("=" * 60)
-            print(f"Raw chunk matches scanned: {result['raw_chunk_matches']}")
-            print(f"Unique candidates scored: {result['candidate_count']}")
-            print(f"Top candidates requested: {args.top_candidates}")
+            if args.mode == "company":
+                print(f"Raw chunk matches scanned: {result['raw_chunk_matches']}")
+                print(f"Unique candidates scored: {result['candidate_count']}")
+                print(f"Top candidates requested: {args.top_candidates}")
+            else:
+                print(f"Applicant CV ID: {result['candidates'][0]['cv_id'] if result['candidates'] else 'N/A'}")
 
             if result.get("requirements"):
                 print("\n[Extracted Job Requirements]")
@@ -243,34 +259,47 @@ def main():
             else:
                 for candidate in result["candidates"]:
                     print("\n" + "-" * 60)
-                    print(f"Rank #{candidate['rank']}")
                     print(f"File: {candidate['file_name']}")
                     print(f"CV ID: {candidate['cv_id']}")
-                    print(f"Score: {candidate['score']:.4f}")
-                    print("Matched sections: " + _clean_text(", ".join(candidate["matched_sections"])))
 
-                    print(f"\n[Summary]\n{_clean_text(candidate.get('summary', ''))}")
+                    if args.mode == "company":
+                        print(f"Rank #{candidate['rank']}")
+                        print(f"Score: {candidate['score']:.4f}")
+                        print("Matched sections: " + _clean_text(", ".join(candidate["matched_sections"])))
+                        print(f"\n[Summary]\n{_clean_text(candidate.get('summary', ''))}")
 
-                    print("\n[Reasons]")
-                    for reason in candidate.get("reasons", []):
-                        print(f"  * {_clean_text(reason)}")
+                        print("\n[Reasons]")
+                        for reason in candidate.get("reasons", []):
+                            print(f"  * {_clean_text(reason)}")
 
-                    if args.mode == "employer":
                         print("\n[Interview Questions]")
                         for q in candidate.get("questions", []):
                             print(f"  ? {_clean_text(q)}")
                     else:
-                        print("\n[CV Improvement Suggestions]")
+                        print(f"\n[Summary]\n{_clean_text(candidate.get('summary', ''))}")
+
+                        print("\n[Section Comparison]")
+                        for sec, data in candidate.get("detailed_sections", {}).items():
+                            print(f"\n  {sec}:")
+                            print(f"    Comparison: {_clean_text(data.get('comparison', 'N/A'))}")
+
+                            for item in data.get("missing_tools", []):
+                                print(f"    Missing Tool: {_clean_text(item)}")
+
+                            for item in data.get("missing_skills", []):
+                                print(f"    Missing Skill: {_clean_text(item)}")
+
+                            for item in data.get("missing_experience", []):
+                                print(f"    Missing Experience: {_clean_text(item)}")
+
+                            for item in data.get("missing_education", []):
+                                print(f"    Missing Education: {_clean_text(item)}")
+
+                        print("\n[General Improvement Suggestions]")
                         for s in candidate.get("suggestions", []):
                             print(f"  + {_clean_text(s)}")
 
                     print(f"\nPDF Report: {_clean_text(candidate.get('report_pdf', 'N/A'))}")
-
-            if result.get("pdf_reports"):
-                print("\n" + "=" * 60)
-                print("PDF REPORTS GENERATED:")
-                for pdf_path in result["pdf_reports"]:
-                    print(f"  -> {pdf_path}")
 
             print("\n" + "=" * 60)
             return

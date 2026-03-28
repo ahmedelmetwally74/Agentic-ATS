@@ -1,27 +1,25 @@
 """
 AgenticATS - LLM Service
-Qwen3.5-2B chat completions via llama-server HTTP API for candidate analysis.
-Implements a Section-Level Map-Reduce pattern.
+Qwen chat completions via llama-server HTTP API for candidate analysis.
+Implements a Section-Level Map-Reduce pattern with robust JSON extraction.
 """
 
 import json
 import logging
 import os
+import re
 import requests
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Qwen3.5-2B chat completions endpoint (llama-server)
-# ---------------------------------------------------------------------------
 LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:8000/v1/chat/completions")
 
 
-def call_llm(messages: list[dict], temperature: float = 0.5,
-             max_tokens: int = 2048) -> str:
+def call_llm(messages: list[dict], temperature: float = 0.1,
+             max_tokens: int = 1200) -> str:
     """
-    Call the Qwen3.5-2B chat completions endpoint with a generous timeout.
-    Temperature is 0.5 for deterministic technical matching.
+    Call the local chat completions endpoint.
+    Lower temperature helps structured JSON output.
     """
     payload = {
         "messages": messages,
@@ -34,14 +32,264 @@ def call_llm(messages: list[dict], temperature: float = 0.5,
             LLM_API_URL,
             headers={"Content-Type": "application/json"},
             json=payload,
-            timeout=180,  # High timeout for sequential Map-Reduce calls
+            timeout=None,
         )
         response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+
+        content = msg.get("content", "")
+        reasoning = msg.get("reasoning_content", "")
+
+        print("\n[DEBUG] Full message keys:", list(msg.keys()))
+        print("[DEBUG] content repr:", repr(content[:500]))
+        # print("[DEBUG] reasoning repr:", repr(reasoning[:500]))
+
+        content = content.strip()
+        if not content:
+            raise ValueError("LLM returned empty content. Check reasoning_content / llama-server thinking settings.")
+
+        return content  
     except Exception as e:
         logger.error(f"LLM API call failed: {e}")
         raise
+
+
+def _clean_llm_output(raw: str) -> str:
+    """
+    Remove common wrappers that break JSON parsing:
+    - <think>...</think>
+    - ```json ... ```
+    - stray backticks
+    """
+    if not raw:
+        return ""
+
+    cleaned = raw.strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"```json\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("```", "")
+    return cleaned.strip()
+
+
+def _extract_json_payload(raw: str):
+    """
+    Try to find and parse the first valid JSON object/array anywhere in the model output.
+    This is much safer than raw.find('{') / raw.rfind('}').
+    """
+    cleaned = _clean_llm_output(raw)
+    decoder = json.JSONDecoder()
+
+    for i, ch in enumerate(cleaned):
+        if ch not in "{[":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(cleaned[i:])
+            return obj
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+def _to_str_list(value) -> list[str]:
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        items = value
+    else:
+        items = [value]
+
+    result = []
+    for item in items:
+        text = str(item).strip()
+        if text:
+            result.append(text)
+    return result
+
+
+def _unique_keep_order(items: list[str], limit: int | None = None) -> list[str]:
+    seen = set()
+    result = []
+
+    for item in items:
+        norm = item.strip().lower()
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        result.append(item.strip())
+
+    if limit is not None:
+        return result[:limit]
+    return result
+
+
+def _normalize_requirements_dict(obj, allowed_sections: list[str]) -> dict[str, list[str]]:
+    """
+    Keep only known JD section keys and normalize values to list[str].
+    """
+    key_map = {s.lower(): s for s in allowed_sections}
+    final = {s: [] for s in allowed_sections}
+
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            canonical = key_map.get(str(k).strip().lower())
+            if not canonical:
+                continue
+            final[canonical] = _unique_keep_order(_to_str_list(v), limit=5)
+
+    final = {k: v for k, v in final.items() if v}
+    return final
+
+
+def _fallback_decompose_job_description(jd_text: str) -> dict[str, list[str]]:
+    """
+    Deterministic fallback from the raw JD text if the model fails to return JSON.
+    This is much better than returning only 'General'.
+    """
+    sections = ["Summary", "Experience", "Education", "Skills", "Projects", "Certifications", "Languages"]
+    result = {s: [] for s in sections}
+
+    lines = []
+    for line in jd_text.splitlines():
+        cleaned = line.strip(" \t-•*")
+        if cleaned:
+            lines.append(cleaned)
+
+    for line in lines:
+        low = line.lower()
+
+        if any(x in low for x in [
+            "about the job", "purpose of the job", "responsible for",
+            "business insights", "strategic decision-making", "drive innovation"
+        ]):
+            result["Summary"].append(line)
+
+        if any(x in low for x in [
+            "bachelor", "master", "phd", "degree", "computer science",
+            "engineering", "statistics"
+        ]):
+            result["Education"].append(line)
+
+        if any(x in low for x in [
+            "english", "arabic", "fluent"
+        ]):
+            result["Languages"].append(line)
+
+        if any(x in low for x in [
+            "years of experience", "+ years", "experience in", "solid experience",
+            "leadership", "mentor", "stakeholder", "projects", "managing business stakeholders"
+        ]):
+            result["Experience"].append(line)
+
+        if any(x in low for x in [
+            "machine learning", "deep learning", "generative ai", "llm",
+            "gan", "diffusion", "mlops", "sql", "reinforcement learning",
+            "foundation models", "analytical mindset", "business acumen",
+            "predictive models", "advanced analytics"
+        ]):
+            result["Skills"].append(line)
+
+        if any(x in low for x in [
+            "pipeline", "deployment", "monitoring", "governance",
+            "open-source", "research", "patent", "model drift"
+        ]):
+            result["Projects"].append(line)
+
+        if any(x in low for x in [
+            "certification", "certifications", "certificate"
+        ]):
+            result["Certifications"].append(line)
+
+    result = {
+        k: _unique_keep_order(v, limit=5)
+        for k, v in result.items()
+        if v
+    }
+
+    if result:
+        return result
+
+    return {
+        "Experience": ["Professional background in the role domain"],
+        "Skills": ["Relevant technical skills for the role"],
+    }
+
+
+def _fallback_section_analysis(section_name: str, mode: str) -> dict:
+    if mode == "company":
+        return {
+            "why_fits": [f"Relevant evidence was retrieved for the {section_name} section."],
+            "things_to_keep_in_mind": [f"Validate depth and recency of {section_name.lower()} experience during the interview."],
+            "questions": [
+                f"Can you walk me through your experience in {section_name.lower()}?",
+                f"What was your most relevant hands-on contribution in {section_name.lower()}?"
+            ]
+        }
+
+    return {
+        "comparison": f"Some relevant evidence was found for {section_name}, but the structured comparison was incomplete.",
+        "missing_tools": [],
+        "missing_skills": [],
+        "missing_experience": [],
+        "missing_education": [],
+        "improvement_suggestions": [
+            f"Make the {section_name} section more explicit and quantified.",
+            f"Add clearer evidence that matches the JD requirements for {section_name.lower()}."
+        ]
+    }
+
+
+def _fallback_synthesis(section_analyses: list[dict], mode: str) -> dict:
+    covered_sections = [a.get("section") for a in section_analyses if a.get("section")]
+
+    if mode == "company":
+        why_fits = []
+        keep_in_mind = []
+        questions = []
+
+        for a in section_analyses:
+            why_fits.extend(_to_str_list(a.get("why_fits")))
+            keep_in_mind.extend(_to_str_list(a.get("things_to_keep_in_mind")))
+            questions.extend(_to_str_list(a.get("questions")))
+
+        why_fits = _unique_keep_order(why_fits, limit=5) or ["Relevant evidence was retrieved from the CV."]
+        keep_in_mind = _unique_keep_order(keep_in_mind, limit=5) or ["Validate project ownership, depth, and recency during the interview."]
+        questions = _unique_keep_order(questions, limit=8) or ["Can you walk me through the most relevant project for this role?"]
+
+        summary = (
+            "Candidate shows relevant evidence"
+            + (f" across these sections: {', '.join(covered_sections)}." if covered_sections else ".")
+            + " Review the strengths and validation points below."
+        )
+
+        return {
+            "ranking_overview_summary": summary,
+            "why_fits": why_fits,
+            "things_to_keep_in_mind": keep_in_mind,
+            "questions": questions,
+        }
+
+    suggestions = []
+    for a in section_analyses:
+        suggestions.extend(_to_str_list(a.get("improvement_suggestions")))
+
+    suggestions = _unique_keep_order(suggestions, limit=8) or [
+        "Align the CV more explicitly with the JD requirements.",
+        "Add quantified impact, tools, and project outcomes."
+    ]
+
+    summary = (
+        "Your CV partially matches the job requirements"
+        + (f" across these sections: {', '.join(covered_sections)}." if covered_sections else ".")
+        + " The suggestions below focus on how to make your CV stronger for this role."
+    )
+
+    return {
+        "general_comparison_summary": summary,
+        "improvement_suggestions": suggestions,
+    }
 
 
 def decompose_job_description(jd_text: str) -> dict[str, list[str]]:
@@ -49,159 +297,227 @@ def decompose_job_description(jd_text: str) -> dict[str, list[str]]:
     Decompose a full Job Description into categorized requirements.
     """
     sections = ["Summary", "Experience", "Education", "Skills", "Projects", "Certifications", "Languages"]
-    config_path = "sections_config.json"
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-                all_heads = config.get("section_headings", [])
-                if all_heads: 
-                    sections = ["Summary", "Experience", "Education", "Skills", "Projects", "Certifications", "Languages"]
-        except: pass
+
+    # system_prompt = (
+    #     "You are an expert technical recruiter.\n"
+    #     "Read the full job description and extract the main requirements.\n"
+    #     "Return ONLY one valid JSON object.\n"
+    #     "Use ONLY these keys exactly if relevant: "
+    #     + ", ".join(sections)
+    #     + ".\n"
+    #     "Each value must be a list of short requirement strings.\n"
+    #     "Do not add any explanation before or after the JSON.\n"
+    #     'Example format: {"Experience": ["4+ years in ML"], "Skills": ["SQL", "MLOps"]}'
+    # )
 
     system_prompt = (
-        "You are an expert technical recruiter. Break down a Job Description into core requirements. "
-        "Categorize these requirements into standard CV sections: " + ", ".join(sections) + ". "
-        "Extract 2-4 points per relevant section. Output ONLY a valid JSON object where keys are "
-        "section names and values are lists of requirement strings."
+        "You are an expert technical recruiter.\n"
+        "Read the full job description and extract the requirements into a structured JSON object.\n"
+        "Return ONLY one valid JSON object.\n"
+        "Allowed keys only: Summary, Experience, Education, Skills, Projects, Certifications, Languages.\n"
+        "Each value must be a list of short requirement strings.\n"
+        "Do not include generic headings like 'About the job', 'Purpose of the job', 'Job specification', or 'Skills and Abilities'.\n"
+        "Do not copy long paragraphs. Split requirements into short, specific bullet-style strings.\n"
+        "Put each requirement under the most relevant key.\n"
+        "If a key has no clear requirements, omit it.\n"
+        "Prefer concrete requirements such as years of experience, tools, methods, technical areas, education, and languages.\n"
+        'Example: {"Experience": ["4+ years in AI/ML"], "Skills": ["SQL", "MLOps", "Deep learning"], "Education": ["Bachelor\'s degree in Computer Science, Engineering, or Statistics"]}'
     )
-    user_prompt = f"Full Job Description:\n{jd_text}\n\nReturn Categorized JSON Requirements."
-    
+
+    user_prompt = (
+        f"Job Description:\n{jd_text}\n\n"
+        "Extract the requirements now.\n"
+        "Return JSON only."
+    )   
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    
+
     try:
-        raw = call_llm(messages, temperature=0.5, max_tokens=1536)
-        start = raw.find('{')
-        end = raw.rfind('}')
-        if start == -1 or end == -1:
-            return {"General": ["Core technical skills", "Professional experience"]}
-        
-        result = json.loads(raw[start:end+1])
-        if not isinstance(result, dict):
-            return {"General": [str(result)]}
-            
-        final_dict = {}
-        for k, v in result.items():
-            if isinstance(v, list):
-                final_dict[str(k)] = [str(i) for i in v]
-            else:
-                final_dict[str(k)] = [str(v)]
-        return final_dict
+        raw = call_llm(messages, temperature=0.1, max_tokens=900)
+        parsed = _extract_json_payload(raw)
+        normalized = _normalize_requirements_dict(parsed, sections)
+
+        if normalized:
+            return normalized
+
+        logger.warning(f"JD decomposition returned non-usable JSON. Raw output preview: {raw[:800]}")
+        return _fallback_decompose_job_description(jd_text)
 
     except Exception as e:
         logger.warning(f"JD decomposition failed: {e}")
-        return {"Experience": ["Professional background"], "Skills": ["Technical proficiency"]}
+        return _fallback_decompose_job_description(jd_text)
 
 
 def analyze_section_match(section_name: str, jd_requirements: list[str], cv_chunk: str, mode: str) -> dict:
     """
-    Perform a section-level comparison between JD requirements and a CV chunk.
-    Output is tailored to the requested headers in sections.md.
+    Perform a section-level comparison between JD requirements and CV evidence.
     """
     jd_req_text = "\n".join([f"- {r}" for r in jd_requirements])
-    
-    if mode == "employer":
-        # Company mode headers: Why fits, Things to keep in mind, Questions
+
+    if mode == "company":
         system_prompt = (
-            "You are an expert HR Analyst. Compare JD requirements against a CV section. "
-            "Determine strengths, unclear points, and specific questions. Output ONLY valid JSON."
+            "You are an expert HR analyst.\n"
+            "Compare job requirements against CV evidence.\n"
+            "Return ONLY valid JSON.\n"
+            'Schema: {"why_fits": ["reason 1", "reason 2"], "things_to_keep_in_mind": ["point 1"], "questions": ["question 1", "question 2"]}\n'
+            "Do not include markdown, code fences, or explanation outside the JSON."
         )
         user_prompt = (
             f"JD Section: {section_name}\n"
             f"Requirements:\n{jd_req_text}\n\n"
             f"CV Evidence:\n{cv_chunk}\n\n"
-            "Return JSON with keys:\n"
-            '- "why_fits": (detailed strengths for this section, max 50 words)\n'
-            '- "things_to_keep_in_mind": (unclear points or gaps for this section, max 50 words)\n'
-            '- "questions": (2-3 tailored questions for this section)'
+            "Return JSON only."
         )
     else:
-        # Applicant mode headers: Job description vs current cv, Improvement suggestions
         system_prompt = (
-            "You are an expert Career Coach. Compare JD requirements against a CV section. "
-            "Identify missing skills/experience and suggest improvements. Output ONLY valid JSON."
+            "You are an expert career coach helping one applicant improve their CV for one specific job.\n"
+            "Analyze ONLY this applicant's CV evidence against ONLY this JD section.\n"
+            "Do NOT compare the applicant to any other candidate, person, or profile.\n"
+            "Return ONLY valid JSON.\n"
+            "Use this schema exactly:\n"
+            "{\n"
+            '  "comparison": "1-3 sentence comparison between this applicant CV section and the JD section",\n'
+            '  "missing_tools": ["software, frameworks, platforms, libraries, or technical tools only"],\n'
+            '  "missing_skills": ["capabilities or competencies only"],\n'
+            '  "missing_experience": ["missing role scope, years, leadership, delivery, domain, or hands-on experience"],\n'
+            '  "missing_education": ["missing degree, field of study, or certification-related education only"],\n'
+            '  "improvement_suggestions": ["specific CV rewrite or content suggestions for this section only"]\n'
+            "}\n"
+            "Rules:\n"
+            "- missing_tools must contain only actual tools, frameworks, libraries, platforms, or technical systems.\n"
+            "- missing_skills must contain only skills or competencies.\n"
+            "- missing_experience must contain only experience gaps.\n"
+            "- missing_education must contain only education or certification gaps.\n"
+            "- If a category has no gaps, return an empty list.\n"
+            "- Be specific and grounded only in the provided JD and CV evidence.\n"
+            "- Do not invent experience that is not shown.\n"
+            "- Do not mention any other candidate.\n"
+            "- Do not include markdown, code fences, or any explanation outside the JSON."
         )
         user_prompt = (
             f"JD Section: {section_name}\n"
             f"Requirements:\n{jd_req_text}\n\n"
-            f"CV Evidence:\n{cv_chunk}\n\n"
-            "Return JSON with keys:\n"
-            '- "comparison": (How they match, specifically list missing tools/skills/exp, max 50 words)\n'
-            '- "improvement_suggestions": (Actionable CV improvements, max 50 words)'
+            f"Applicant CV Evidence:\n{cv_chunk}\n\n"
+            "Evaluate this applicant only.\n"
+            "Return JSON only."
         )
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    
+
     try:
-        raw = call_llm(messages, temperature=0.5, max_tokens=1024)
-        start = raw.find('{')
-        end = raw.rfind('}')
-        if start == -1 or end == -1:
-            return {"error": "Comparison unavailable"}
-        return json.loads(raw[start:end+1])
+        raw = call_llm(messages, temperature=0.1, max_tokens=700)
+        parsed = _extract_json_payload(raw)
+
+        if not isinstance(parsed, dict):
+            logger.warning(f"Section analysis parse failed for '{section_name}'. Raw output preview: {raw[:800]}")
+            return _fallback_section_analysis(section_name, mode)
+
+        if mode == "company":
+            return {
+                "why_fits": _unique_keep_order(_to_str_list(parsed.get("why_fits")), limit=4)
+                           or [f"Relevant evidence was found for {section_name}."],
+                "things_to_keep_in_mind": _unique_keep_order(_to_str_list(parsed.get("things_to_keep_in_mind")), limit=4)
+                           or [f"Validate depth of {section_name.lower()} experience."],
+                "questions": _unique_keep_order(_to_str_list(parsed.get("questions")), limit=4)
+                           or [f"Can you describe your experience in {section_name.lower()}?"],
+            }
+
+        return {
+            "comparison": str(parsed.get("comparison", "")).strip()
+                        or f"Relevant evidence was found for {section_name}, but the comparison was incomplete.",
+            "missing_tools": _unique_keep_order(_to_str_list(parsed.get("missing_tools")), limit=5),
+            "missing_skills": _unique_keep_order(_to_str_list(parsed.get("missing_skills")), limit=5),
+            "missing_experience": _unique_keep_order(_to_str_list(parsed.get("missing_experience")), limit=5),
+            "missing_education": _unique_keep_order(_to_str_list(parsed.get("missing_education")), limit=5),
+            "improvement_suggestions": _unique_keep_order(_to_str_list(parsed.get("improvement_suggestions")), limit=5)
+                        or [f"Strengthen the {section_name} section with clearer and more specific evidence."],
+        }
+
     except Exception as e:
-        return {"error": f"Matching error: {str(e)}"}
+        logger.warning(f"Section analysis failed for '{section_name}': {e}")
+        return _fallback_section_analysis(section_name, mode)
 
 
 def synthesize_candidate_analysis(section_analyses: list[dict], mode: str) -> dict:
     """
     Synthesize section-level analyses into the final mode-based headers.
     """
-    combined_text = "\n".join([json.dumps(a) for a in section_analyses])
-    
-    if mode == "employer":
-        goal_desc = (
-            "Generate: 1) A 'Ranking & Match Overview' (score-aware summary), "
-            "2) A consolidated 'Why fits' list, 3) Important 'Things to keep in mind', "
-            "and 4) Tailored technical/HR 'Questions'."
-        )
-        keys_desc = (
-            '- "ranking_overview_summary": (Paragraph summary of candidate fit)\n'
-            '- "why_fits": (list of top 3-5 strengths)\n'
-            '- "things_to_keep_in_mind": (list of gaps/red flags)\n'
-            '- "questions": (list of 5-8 tailored questions)'
+    if not section_analyses:
+        return _fallback_synthesis(section_analyses, mode)
+
+    combined_text = "\n".join([json.dumps(a, ensure_ascii=False) for a in section_analyses])
+
+    if mode == "company":
+        system_prompt = (
+            "You are an expert analyst.\n"
+            "Synthesize section-level candidate analyses into one final company-facing report.\n"
+            "Return ONLY valid JSON.\n"
+            'Schema: {"ranking_overview_summary": "...", "why_fits": ["..."], "things_to_keep_in_mind": ["..."], "questions": ["..."]}\n'
+            "Use only what is supported by the provided analyses."
         )
     else:
-        goal_desc = (
-            "Generate: 1) A detailed section comparison summary and "
-            "2) A consolidated list of 'General improvement suggestions' for the CV."
-        )
-        keys_desc = (
-            '- "general_comparison_summary": (Paragraph summary of gaps across sections)\n'
-            '- "improvement_suggestions": (list of 5-8 actionable CV improvements)'
+        system_prompt = (
+            "You are an expert career coach writing a final report for ONE applicant.\n"
+            "Use only the provided section analyses for this same applicant.\n"
+            "Do NOT compare the applicant to any other candidate, benchmark candidate, or external profile.\n"
+            "Return ONLY valid JSON.\n"
+            "Use this schema exactly:\n"
+            '{'
+            '"general_comparison_summary": "2-4 sentence summary focused only on this applicant and this job", '
+            '"improvement_suggestions": ["specific, practical CV improvement suggestion 1", "specific, practical CV improvement suggestion 2"]'
+            '}\n'
+            "Rules:\n"
+            "- Mention only this applicant.\n"
+            "- Do not say 'other candidate', 'another applicant', or similar phrases.\n"
+            "- Summarize only the main fit level and the main gaps for this applicant.\n"
+            "- Suggestions must be practical CV edits or additions.\n"
+            "- No markdown, no code fences, no explanation outside JSON."
         )
 
-    system_prompt = (
-        "You are an expert analyst. Synthesize section-level analyses into a FINAL report. "
-        "Strict Rule: Only report what is explicitly in the evidence. Do NOT hallucinate."
-    )
     user_prompt = (
-        f"Individual Section Analyses:\n{combined_text}\n\n"
-        f"Goal: {goal_desc}\n"
-        f"Return JSON with keys:\n{keys_desc}"
+        f"Individual Section Analyses for one applicant:\n{combined_text}\n\n"
+        "Write the final applicant report now.\n"
+        "Return JSON only."
     )
-    
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    
+
     try:
-        raw = call_llm(messages, temperature=0.5, max_tokens=2048)
-        start = raw.find('{')
-        end = raw.rfind('}')
-        if start == -1 or end == -1:
-            raise ValueError("Synthesis failed: No JSON object.")
-        return json.loads(raw[start:end+1])
+        raw = call_llm(messages, temperature=0.1, max_tokens=900)
+        parsed = _extract_json_payload(raw)
+
+        if not isinstance(parsed, dict):
+            logger.warning(f"Synthesis parse failed. Raw output preview: {raw[:1200]}")
+            return _fallback_synthesis(section_analyses, mode)
+
+        if mode == "company":
+            return {
+                "ranking_overview_summary": str(parsed.get("ranking_overview_summary", "")).strip()
+                                            or _fallback_synthesis(section_analyses, mode)["ranking_overview_summary"],
+                "why_fits": _unique_keep_order(_to_str_list(parsed.get("why_fits")), limit=5)
+                            or _fallback_synthesis(section_analyses, mode)["why_fits"],
+                "things_to_keep_in_mind": _unique_keep_order(_to_str_list(parsed.get("things_to_keep_in_mind")), limit=5)
+                            or _fallback_synthesis(section_analyses, mode)["things_to_keep_in_mind"],
+                "questions": _unique_keep_order(_to_str_list(parsed.get("questions")), limit=8)
+                            or _fallback_synthesis(section_analyses, mode)["questions"],
+            }
+
+        return {
+            "general_comparison_summary": str(parsed.get("general_comparison_summary", "")).strip()
+                                          or _fallback_synthesis(section_analyses, mode)["general_comparison_summary"],
+            "improvement_suggestions": _unique_keep_order(_to_str_list(parsed.get("improvement_suggestions")), limit=8)
+                                       or _fallback_synthesis(section_analyses, mode)["improvement_suggestions"],
+        }
+
     except Exception as e:
         logger.error(f"Synthesis failed: {e}")
-        return {
-            "ranking_overview_summary" if mode == "employer" else "general_comparison_summary": "Analysis failed.",
-            "why_fits" if mode == "employer" else "improvement_suggestions": ["Manual review recommended."]
-        }
+        return _fallback_synthesis(section_analyses, mode)

@@ -123,7 +123,7 @@ def generate_report_pdf(candidate_result: dict, mode: str, output_dir: str = "."
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
 
-    if mode == "employer":
+    if mode == "company":
         # --- Company Mode Headers ---
         
         # 1. Ranking & Match Overview
@@ -149,26 +149,53 @@ def generate_report_pdf(candidate_result: dict, mode: str, output_dir: str = "."
 
     else:
         # --- Applicant Mode Headers ---
-        
-        # 1. General comparison for each section
-        pdf.add_section_title("CV vs Job Description: Section Comparison")
+
         for sec, data in candidate_result.get("detailed_sections", {}).items():
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.set_text_color(20, 60, 140)
-            pdf.cell(pdf.epw, 8, f"Job description vs {sec} cv", new_x="LMARGIN", new_y="NEXT")
-            pdf.set_text_color(0, 0, 0)
+            pdf.add_section_title(sec)
+
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(pdf.epw, 5, _safe_text(data.get("comparison", "N/A")), new_x="LMARGIN", new_y="NEXT")
-            # Also show improvement suggestions for this specific section implicitly
-            sug = data.get("improvement_suggestions")
-            if sug:
-                pdf.set_font("Helvetica", "I", 9)
-                pdf.set_text_color(100, 50, 50)
-                pdf.multi_cell(pdf.epw, 5, f"Section Tip: {_safe_text(sug)}", new_x="LMARGIN", new_y="NEXT")
-            pdf.set_text_color(0, 0, 0)
+            pdf.multi_cell(
+                pdf.epw,
+                5,
+                _safe_text(data.get("comparison", "N/A")),
+                new_x="LMARGIN",
+                new_y="NEXT"
+            )
+            pdf.ln(2)
+
+            missing_tools = data.get("missing_tools", [])
+            missing_skills = data.get("missing_skills", [])
+            missing_experience = data.get("missing_experience", [])
+            missing_education = data.get("missing_education", [])
+            section_suggestions = data.get("improvement_suggestions", [])
+
+            if missing_tools:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(pdf.epw, 6, "Missing tools", new_x="LMARGIN", new_y="NEXT")
+                pdf.add_bullet_list([_safe_text(x) for x in missing_tools])
+
+            if missing_skills:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(pdf.epw, 6, "Missing skills", new_x="LMARGIN", new_y="NEXT")
+                pdf.add_bullet_list([_safe_text(x) for x in missing_skills])
+
+            if missing_experience:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(pdf.epw, 6, "Missing experience", new_x="LMARGIN", new_y="NEXT")
+                pdf.add_bullet_list([_safe_text(x) for x in missing_experience])
+
+            if missing_education:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(pdf.epw, 6, "Missing education", new_x="LMARGIN", new_y="NEXT")
+                pdf.add_bullet_list([_safe_text(x) for x in missing_education])
+
+            if section_suggestions:
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(pdf.epw, 6, "Section improvement suggestions", new_x="LMARGIN", new_y="NEXT")
+                pdf.add_bullet_list([_safe_text(x) for x in section_suggestions])
+
             pdf.ln(4)
 
-        # 2. General improvement suggestions
         pdf.add_page()
         pdf.add_section_title("General improvement suggestions")
         pdf.add_bullet_list([_safe_text(s) for s in candidate_result.get("suggestions", [])])

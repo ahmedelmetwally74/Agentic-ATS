@@ -11,7 +11,7 @@ import uuid
 
 import requests
 
-from db import insert_chunks_batch, delete_by_file
+from db import insert_chunks_batch, delete_by_file, get_existing_cv_id_by_file_name
 
 
 logger = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ def sub_chunk(text: str, max_chars: int = 1500) -> list[str]:
 # Full ingestion pipeline
 # ---------------------------------------------------------------------------
 
-def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
+def ingest_cv(file_path: str, replace_existing: bool = False) -> tuple[str, int]:
     """
     Full RAG ingestion pipeline:
       1. Extract text from the PDF/DOCX (using existing extract_text)
@@ -224,6 +224,12 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
 
     file_name = os.path.basename(file_path)
     print(f"\n[INGEST] Starting ingestion for: {file_name}")
+
+    existing_cv_id = get_existing_cv_id_by_file_name(file_name)
+
+    if existing_cv_id and not replace_existing:
+        print(f"[INGEST] Found existing embeddings for '{file_name}' (CV ID: {existing_cv_id}). Skipping re-ingestion.")
+        return existing_cv_id, 0
 
     # Step 1: Extract text
     text = extract_text(file_path)
@@ -266,7 +272,7 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
     return cv_id, len(records)
 
 
-def ingest_cv_folder(folder_path: str, replace_existing: bool = True) -> list[tuple[str, str, int]]:
+def ingest_cv_folder(folder_path: str, replace_existing: bool = False) -> list[tuple[str, str, int]]:
     """
     Ingest all CV files (.pdf, .docx) in a folder directory.
 

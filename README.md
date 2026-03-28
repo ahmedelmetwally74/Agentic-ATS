@@ -11,8 +11,8 @@ The latest version has been rebuilt to use **llama-server** for both structured 
 - **Jina v5 Embeddings**: Uses high-quality 1024-dimensional embeddings served locally via `llama-server`.
 - **LLM Reasoning**: Uses Qwen3.5-2B to generate natural language explanations of match quality.
 - **Two Analysis Modes**:
-  - **Employer Mode**: Upload a folder of CVs. Match against a job description to rank top candidates. Generates a PDF report per candidate with specific reasons they fit the role and custom **interview questions** to ask them.
-  - **Client/Job Seeker Mode**: Upload your own CV. Match against a job description to receive a PDF report analyzing your strengths and providing targeted **CV improvement suggestions** (missing skills, project ideas, gaps).
+  - **Company Mode**: Upload a folder of CVs. Match against a job description to rank top candidates. Generates a PDF report per candidate with specific reasons they fit the role and custom **interview questions** to ask them.
+  - **Applicant Mode**: Upload your own CV. Match against a job description to receive a PDF report analyzing your strengths and providing targeted **CV improvement suggestions** (missing skills, project ideas, gaps).
 - **Automated PDF Reports**: Match results aren't just printed to the terminal; they are saved as clean, formatted PDF reports per candidate for easy sharing or review.
 
 ---
@@ -75,7 +75,7 @@ python main.py --init-db
 
 ## CLI Usage Guide
 
-### 1) Employer Mode (Candidate Ranking)
+### 1) Company Mode (Candidate Ranking)
 
 **Step A: Ingest a folder of CVs**
 You can point `--embed` directly to a directory. The system will process all `.pdf` and `.docx` files it finds.
@@ -84,25 +84,25 @@ python main.py --embed ".\Resources\CandidatesFolder"
 ```
 
 **Step B: Match Job Description & Generate PDF Reports**
-Specify `--mode employer` and provide the path to your Job Description text file.
+Specify `--mode company` and provide the path to your Job Description text file.
 ```cmd
-python main.py --mode employer --jd-file ".\job_description.txt" --top-candidates 3 --output-dir ".\Reports"
+python main.py --mode company --jd-file ".\job_description.txt" --top-candidates 3 --output-dir ".\Reports"
 ```
 *Output*: A ranked terminal list + 3 PDF reports containing reasons for selection and suggested interview questions.
 
 ---
 
-### 2) Client Mode (CV Improvement)
+### 2) Applicant Mode (CV Improvement)
 
-**Step A: Ingest the Client's CV**
+**Step A: Ingest the Applicant's CV**
 ```cmd
 python main.py --embed ".\Resources\My_CV.pdf"
 ```
 
 **Step B: Analyze Against Job Description**
-Specify `--mode client` and provide the target Job Description.
+Specify `--mode applicant` and provide the target Job Description.
 ```cmd
-python main.py --mode client --jd-file ".\target_role.txt" --output-dir ".\Reports"
+python main.py --mode applicant --jd-file ".\target_role.txt" --output-dir ".\Reports"
 ```
 *Output*: A PDF report detailing current strengths and actionable suggestions for how to improve the CV for this specific role.
 
@@ -136,7 +136,7 @@ python main.py --search "Python and SQL" --section "Technical Skills"
 
 - `main.py`: The CLI entry point. Handles arguments and orchestrates the flow.
 - `embedding_service.py`: Calls the local Jina v5 embedding API. Parses CV text into sections and chunks. Prepares the "Document: "/"Query: " patterns required by Jina.
-- `llm_service.py`: Calls local Qwen3.5-2B for employer/client contextual analysis.
+- `llm_service.py`: Calls local Qwen3.5-2B for Company/Applicant contextual analysis.
 - `report_service.py`: Generates the formatted PDF analysis reports.
 - `matching_service.py`: Executes the candidate retrieval pool, scores them section by section, and prepares data for the LLM.
 - `rag_service.py`: Simple chunk retrieval for debugging or standard search.

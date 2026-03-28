@@ -253,3 +253,59 @@ def search_best_chunk_for_cv(cv_id: str, query_embedding: list[float]) -> dict |
             }
     finally:
         conn.close()
+
+def get_chunks_for_cv(cv_id: str) -> list[dict]:
+    """
+    Retrieve ALL stored chunks for one candidate, ordered by section and chunk index.
+    Used so the deep analysis sees the full CV context, not just the retrieval pool.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, cv_id, file_name, section_name, chunk_index, chunk_text
+                FROM cv_chunks
+                WHERE cv_id = %s
+                ORDER BY section_name, chunk_index
+                """,
+                (cv_id,),
+            )
+            rows = cur.fetchall()
+
+            return [
+                {
+                    "id": row[0],
+                    "cv_id": row[1],
+                    "file_name": row[2],
+                    "section_name": row[3],
+                    "chunk_index": row[4],
+                    "chunk_text": row[5],
+                }
+                for row in rows
+            ]
+    finally:
+        conn.close()
+
+def get_existing_cv_id_by_file_name(file_name: str) -> str | None:
+    """
+    Return an existing cv_id for a file_name if it was already embedded before.
+    If multiple rows exist, return the most recent one.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT cv_id
+                FROM cv_chunks
+                WHERE file_name = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (file_name,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
