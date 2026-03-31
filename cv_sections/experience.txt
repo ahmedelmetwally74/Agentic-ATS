@@ -1,0 +1,10 @@
+Siemens, AI / ML Engineer Intern
+2025 - Present
+- Supported the development of AI-based internal tools, including document review and extraction workflows.
+- Worked on LLM-based projects related to contract analysis and structured information extraction.
+- Contributed to backend logic, prompt design, testing, and workflow improvements.
+
+Giza Systems, Machine Learning Intern
+2024
+- Worked on machine learning experimentation and data preparation tasks.
+- Explored AutoML and federated learning concepts in practical use cases.

@@ -1,0 +1,19 @@
+Heart Attack Risk Prediction Dashboard
+Built and evaluated machine learning models to predict heart attack risk and identify key risk drivers.
+Created an interactive Plotly dashboard and integrated an LLM assistant to explain predictions.
+
+Time-Series Sales Forecasting
+Built an end-to-end forecasting pipeline for 10-day aggregated sales by product and city.
+Tested multiple modeling approaches and selected the best setup based on business needs and forecasting accuracy.
+
+Movie Recommender System
+Built a recommendation system using the MovieLens dataset and deep learning techniques in Keras.
+Generated movie recommendations based on historical user ratings.
+
+Arabic Dialect Identification
+Explored and implemented multiple machine learning and deep learning models for Arabic dialect classification.
+Compared model performance to identify the best option for deployment.
+
+Multi-Class Prediction of Obesity Risk
+Prepared and cleaned the dataset, performed visualization, and trained classification models.
+Tested decision trees and boosting-based approaches to improve prediction quality.

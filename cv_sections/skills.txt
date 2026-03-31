@@ -1,0 +1,17 @@
+Python
+SQL
+Machine Learning
+Deep Learning
+Natural Language Processing
+Time Series Forecasting
+TensorFlow
+Keras
+PyTorch
+scikit-learn
+Pandas
+NumPy
+Plotly
+FastAPI
+Flask
+Git
+PostgreSQL

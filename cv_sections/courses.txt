@@ -1,0 +1,5 @@
+Machine Learning - Coursera
+Deep Learning Specialization - Coursera
+Machine Learning for Natural Language Processing
+AWS Academy Machine Learning Foundations
+Python for Data Science and Machine Learning Bootcamp

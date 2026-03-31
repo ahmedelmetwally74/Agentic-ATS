@@ -1,7 +1,7 @@
 """
 AgenticATS - Main Entry Point
 Extract text from PDF or Word documents, embed into PostgreSQL, and search via RAG.
-Supports two analysis modes: company (candidate ranking) and applicant (CV improvement).
+Supports three analysis modes: company (candidate ranking), applicant (CV improvement), and cv_generation (build a CV from section text files).
 
 Usage:
     python main.py <file_path>                              # Extract text only
@@ -10,6 +10,7 @@ Usage:
     python main.py --search "query text"                    # RAG search
     python main.py --mode company --jd-file job.txt         # Company: rank candidates + interview questions
     python main.py --mode applicant --jd-file job.txt       # Applicant: CV improvement suggestions
+    python main.py --mode cv_generation --sections-dir .\cv_sections -o .\generated_cv.docx
     python main.py --init-db                                # Initialize database
 """
 
@@ -148,9 +149,9 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["company", "applicant"],
+        choices=["company", "applicant", "cv_generation"],
         default=None,
-        help="Analysis mode: 'company' for candidate ranking or 'applicant' for CV improvement",
+        help="Analysis mode: 'company' for candidate ranking or 'applicant' for CV improvement or 'cv_generation' for building a CV from section files",
     )
     parser.add_argument(
         "--top-candidates",
@@ -183,6 +184,13 @@ def main():
         metavar="CV_ID",
         help="Required for applicant mode: analyze one specific CV only",
     )
+    parser.add_argument(
+        "--sections-dir",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Directory containing CV section text files for cv_generation mode",
+    )
 
     args = parser.parse_args()
 
@@ -191,6 +199,24 @@ def main():
         if args.init_db:
             from db import init_db
             init_db()
+            return
+
+        # --- CV Generation ---
+        if args.mode == "cv_generation":
+            if not args.sections_dir:
+                parser.error("--sections-dir is required for cv_generation mode.")
+
+            from cv_generation_service import generate_cv_from_sections
+
+            output_path = args.output or "generated_cv.docx"
+            final_path = generate_cv_from_sections(args.sections_dir, output_path)
+
+            print("\n" + "=" * 60)
+            print("CV GENERATION RESULT")
+            print("=" * 60)
+            print(f"Sections directory: {args.sections_dir}")
+            print(f"Generated file: {final_path}")
+            print("=" * 60)
             return
 
         # --- Candidate Matching ---
