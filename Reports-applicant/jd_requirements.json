@@ -1,0 +1,90 @@
+[
+  {
+    "id": "req_01",
+    "text": "Bachelors degree in Computer Science, Engineering or Statistics",
+    "category": "education",
+    "importance": "required",
+    "section_group": "education",
+    "matching_strategy": "exact_plus_semantic"
+  },
+  {
+    "id": "req_02",
+    "text": "Fluent English and Arabic",
+    "category": "language",
+    "importance": "required",
+    "section_group": "languages",
+    "matching_strategy": "exact_plus_semantic"
+  },
+  {
+    "id": "req_03",
+    "text": "4+ years of experience in AI, machine learning, and deep learning",
+    "category": "experience",
+    "importance": "preferred",
+    "section_group": "experience",
+    "matching_strategy": "experience_duration"
+  },
+  {
+    "id": "req_04",
+    "text": "Experience in Generative AI (LLMs, GANs, diffusion models..etc)",
+    "category": "skill",
+    "importance": "preferred",
+    "section_group": "skills",
+    "matching_strategy": "exact_plus_semantic"
+  },
+  {
+    "id": "req_05",
+    "text": "Experience with reinforcement learning and foundation models is a plus",
+    "category": "skill",
+    "importance": "preferred",
+    "section_group": "skills",
+    "matching_strategy": "exact_plus_semantic"
+  },
+  {
+    "id": "req_06",
+    "text": "Experience with SQL",
+    "category": "skill",
+    "importance": "preferred",
+    "section_group": "skills",
+    "matching_strategy": "exact_plus_semantic"
+  },
+  {
+    "id": "req_07",
+    "text": "Ability to work in a fast-paced, dynamic environment, handling multiple concurrent",
+    "category": "soft_skill",
+    "importance": "preferred",
+    "section_group": "other",
+    "matching_strategy": "semantic_evidence"
+  },
+  {
+    "id": "req_08",
+    "text": "Leadership skills with experience in managing business stakeholders and projects",
+    "category": "soft_skill",
+    "importance": "preferred",
+    "section_group": "other",
+    "matching_strategy": "semantic_evidence"
+  },
+  {
+    "id": "req_09",
+    "text": "Knowledge in MLOps, including model drift detection, and scaling ML systems",
+    "category": "skill",
+    "importance": "preferred",
+    "section_group": "skills",
+    "matching_strategy": "exact_plus_semantic"
+  },
+  {
+    "id": "req_10",
+    "text": "Solid experience in classical ML modelling",
+    "category": "skill",
+    "importance": "preferred",
+    "section_group": "skills",
+    "matching_strategy": "exact_plus_semantic"
+  },
+  {
+    "id": "req_11",
+    "text": "Solid experience in deep learning architectures",
+    "category": "skill",
+    "importance": "preferred",
+    "section_group": "skills",
+    "matching_strategy": "exact_plus_semantic"
+  }
+]

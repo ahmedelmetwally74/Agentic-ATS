@@ -202,6 +202,44 @@ def search_similar_pool(query_embedding: list[float], pool_size: int = 50,
     )
 
 
+def search_similar_for_cv(cv_id: str, query_embedding: list[float], top_k: int = 3) -> list[dict]:
+    """
+    Retrieve the top_k most relevant chunks for one specific CV.
+
+    This is the applicant-mode retrieval primitive for requirement-centric
+    evidence gathering without searching across the whole candidate pool.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, cv_id, file_name, section_name, chunk_index, chunk_text,
+                       1 - (embedding <=> %s::vector) AS similarity
+                FROM cv_chunks
+                WHERE cv_id = %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (str(query_embedding), cv_id, str(query_embedding), top_k),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": row[0],
+                    "cv_id": row[1],
+                    "file_name": row[2],
+                    "section_name": row[3],
+                    "chunk_index": row[4],
+                    "chunk_text": row[5],
+                    "similarity": float(row[6]),
+                }
+                for row in rows
+            ]
+    finally:
+        conn.close()
+
+
 def delete_by_file(file_name: str) -> int:
     """
     Delete all chunks for a given file. Useful for re-ingestion.
