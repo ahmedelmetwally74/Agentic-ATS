@@ -19,7 +19,7 @@ from docx import Document
 from lxml import etree
 from python_redlines.engines import XmlPowerToolsEngine
 
-from document_utils import normalize, flatten
+from core.document_utils import normalize, flatten
 
 
 # ---------------------------------------------------------------------------

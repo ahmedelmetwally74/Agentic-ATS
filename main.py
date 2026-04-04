@@ -19,7 +19,7 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from document_utils import normalize_text_basic, clean_extracted_text
+from core.document_utils import normalize_text_basic, clean_extracted_text
 
 # Load environment variables from .env file
 load_dotenv()
@@ -34,7 +34,7 @@ def _clean_text(text: str) -> str:
     cleaned = "".join(c for c in cleaned if c.isprintable())
     return cleaned.strip()
 
-from document_service import (
+from core.document_service import (
     extract_text_from_pdf_sync,
     extract_text_from_word,
     pdf_has_text,
@@ -197,142 +197,37 @@ def main():
     try:
         # --- Init Database ---
         if args.init_db:
-            from db import init_db
+            from core.db import init_db
             init_db()
             return
 
         # --- CV Generation ---
         if args.mode == "cv_generation":
-            if not args.sections_dir:
-                parser.error("--sections-dir is required for cv_generation mode.")
+            from modes.cv_generation_mode import run_cv_generation_mode
 
-            from cv_generation_service import generate_cv_from_sections
-
-            output_path = args.output or "generated_cv.docx"
-            final_path = generate_cv_from_sections(args.sections_dir, output_path)
-
-            print("\n" + "=" * 60)
-            print("CV GENERATION RESULT")
-            print("=" * 60)
-            print(f"Sections directory: {args.sections_dir}")
-            print(f"Generated file: {final_path}")
-            print("=" * 60)
+            run_cv_generation_mode(args, parser)
             return
 
         # --- Candidate Matching ---
         if args.match_job or args.jd_file:
-            if args.match_job and args.jd_file:
-                parser.error("Use either --match-job or --jd-file, not both.")
-
             if not args.mode:
                 parser.error("--mode is required for matching. Use --mode company or --mode applicant.")
 
-            job_description = args.match_job
-            if args.jd_file:
-                if not os.path.isfile(args.jd_file):
-                    raise FileNotFoundError(f"Job description file not found: {args.jd_file}")
-                with open(args.jd_file, "r", encoding="utf-8") as f:
-                    job_description = f.read().strip()
-
-            if not job_description:
-                parser.error("A non-empty job description is required.")
-
-            from matching_service import match_candidates, analyze_applicant_cv
-
             if args.mode == "company":
-                result = match_candidates(
-                    job_description=job_description,
-                    top_candidates=args.top_candidates,
-                    pool_size=args.pool_size,
-                    section_filter=args.section,
-                    mode="company",
-                    output_dir=args.output_dir,
-                )
+                from modes.company_mode import run_company_mode
+
+                run_company_mode(args, parser, _clean_text)
+            elif args.mode == "applicant":
+                from modes.applicant_mode import run_applicant_mode
+
+                run_applicant_mode(args, parser, _clean_text)
             else:
-                if not args.cv_id:
-                    parser.error("--cv-id is required for applicant mode.")
-
-                result = analyze_applicant_cv(
-                    job_description=job_description,
-                    cv_id=args.cv_id,
-                    section_filter=args.section,
-                    output_dir=args.output_dir,
-                )
-
-            print("\n" + "=" * 60)
-            print(f"CANDIDATE MATCHING RESULTS ({args.mode.upper()} MODE)")
-            print("=" * 60)
-            if args.mode == "company":
-                print(f"Raw chunk matches scanned: {result['raw_chunk_matches']}")
-                print(f"Unique candidates scored: {result['candidate_count']}")
-                print(f"Top candidates requested: {args.top_candidates}")
-            else:
-                print(f"Applicant CV ID: {result['candidates'][0]['cv_id'] if result['candidates'] else 'N/A'}")
-
-            if result.get("requirements"):
-                print("\n[Extracted Job Requirements]")
-                for section, reqs in result["requirements"].items():
-                    if reqs:
-                        print(f"  {section}:")
-                        for req in reqs:
-                            print(f"    - {_clean_text(req)}")
-            
-            if result.get("jd_report"):
-                print(f"\nJD Analysis Report: {_clean_text(result['jd_report'])}")
-
-            if not result["candidates"]:
-                print("\nNo matching candidates found.")
-            else:
-                for candidate in result["candidates"]:
-                    print("\n" + "-" * 60)
-                    print(f"File: {candidate['file_name']}")
-                    print(f"CV ID: {candidate['cv_id']}")
-
-                    if args.mode == "company":
-                        print(f"Rank #{candidate['rank']}")
-                        print(f"Score: {candidate['score']:.4f}")
-                        print("Matched sections: " + _clean_text(", ".join(candidate["matched_sections"])))
-                        print(f"\n[Summary]\n{_clean_text(candidate.get('summary', ''))}")
-
-                        print("\n[Reasons]")
-                        for reason in candidate.get("reasons", []):
-                            print(f"  * {_clean_text(reason)}")
-
-                        print("\n[Interview Questions]")
-                        for q in candidate.get("questions", []):
-                            print(f"  ? {_clean_text(q)}")
-                    else:
-                        print(f"\n[Summary]\n{_clean_text(candidate.get('summary', ''))}")
-
-                        print("\n[Section Comparison]")
-                        for sec, data in candidate.get("detailed_sections", {}).items():
-                            print(f"\n  {sec}:")
-                            print(f"    Comparison: {_clean_text(data.get('comparison', 'N/A'))}")
-
-                            for item in data.get("missing_tools", []):
-                                print(f"    Missing Tool: {_clean_text(item)}")
-
-                            for item in data.get("missing_skills", []):
-                                print(f"    Missing Skill: {_clean_text(item)}")
-
-                            for item in data.get("missing_experience", []):
-                                print(f"    Missing Experience: {_clean_text(item)}")
-
-                            for item in data.get("missing_education", []):
-                                print(f"    Missing Education: {_clean_text(item)}")
-
-                        print("\n[General Improvement Suggestions]")
-                        for s in candidate.get("suggestions", []):
-                            print(f"  + {_clean_text(s)}")
-
-                    print(f"\nPDF Report: {_clean_text(candidate.get('report_pdf', 'N/A'))}")
-
-            print("\n" + "=" * 60)
+                parser.error("--mode is required for matching. Use --mode company or --mode applicant.")
             return
 
         # --- RAG Search ---
         if args.search:
-            from rag_service import rag_query
+            from core.rag_service import rag_query
             result = rag_query(args.search, top_k=args.top_k,
                                section_filter=args.section)
 
@@ -356,7 +251,7 @@ def main():
 
             if os.path.isdir(embed_path):
                 # Folder mode: ingest all CVs in the directory
-                from embedding_service import ingest_cv_folder
+                from core.embedding_service import ingest_cv_folder
                 results = ingest_cv_folder(embed_path)
 
                 print("\n" + "=" * 60)
@@ -368,7 +263,7 @@ def main():
                 print("=" * 60)
             elif os.path.isfile(embed_path):
                 # Single file mode
-                from embedding_service import ingest_cv
+                from core.embedding_service import ingest_cv
                 cv_id, chunk_count = ingest_cv(embed_path)
                 print(f"\n[SUCCESS] Ingested {chunk_count} chunks into the database. (CV ID: {cv_id})")
             else:

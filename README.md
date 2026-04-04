@@ -255,13 +255,29 @@ Check:
 ## Project Structure Overview
 
 - `main.py` - CLI entry point and orchestration
-- `embedding_service.py` - CV parsing, chunking, embedding calls, ingestion helpers
-- `llm_service.py` - job description decomposition, section analysis, synthesis
-- `matching_service.py` - company ranking flow and applicant single-CV flow
-- `report_service.py` - PDF generation
-- `rag_service.py` - retrieval-only search flow
-- `db.py` - PostgreSQL / `pgvector` queries and helpers
-- `document_service.py` - raw PDF / DOCX extraction logic
+- `modes/` - CLI runners per mode
+- `modes/applicant_mode.py` - applicant-mode CLI runner
+- `modes/company_mode.py` - company-mode CLI runner
+- `modes/cv_generation_mode.py` - CV generation CLI runner
+- `core/` - shared infrastructure and data services
+- `core/embedding_service.py` - CV parsing, chunking, embedding calls, ingestion helpers
+- `core/rag_service.py` - retrieval-only search flow
+- `core/db.py` - PostgreSQL / `pgvector` queries and helpers
+- `core/document_service.py` - raw PDF / DOCX extraction logic
+- `llm/` - LLM client, prompts, and synthesis logic
+- `llm/llm_shared.py` - shared LLM client helpers and JD decomposition
+- `llm/applicant_llm_service.py` - applicant-focused LLM prompts and synthesis
+- `llm/company_llm_service.py` - company-focused LLM prompts and synthesis
+- `llm/cv_writer_llm_service.py` - CV rewriting helpers for CV generation
+- `matching/` - candidate matching flows
+- `matching/matching_shared.py` - shared matching helpers
+- `matching/applicant_matching_service.py` - applicant single-CV matching flow
+- `matching/company_matching_service.py` - company candidate-ranking flow
+- `reporting/` - PDF generation logic
+- `reporting/report_shared.py` - shared PDF report helpers
+- `reporting/applicant_report_service.py` - applicant PDF generation
+- `reporting/company_report_service.py` - company PDF generation
+- `reporting/jd_report_service.py` - job-description PDF generation
 - `sections_config.json` - section detection rules and weights
 
 ---

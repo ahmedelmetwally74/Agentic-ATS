@@ -7,7 +7,7 @@ from docx.shared import Pt, Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-from llm_service import (
+from llm.cv_writer_llm_service import (
     rewrite_summary_for_cv,
     rewrite_experience_for_cv,
     rewrite_education_for_cv,

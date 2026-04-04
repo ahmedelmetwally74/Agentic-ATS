@@ -8,13 +8,15 @@ import logging
 import os
 import re
 import uuid
+from pathlib import Path
 
 import requests
 
-from db import insert_chunks_batch, delete_by_file, get_existing_cv_id_by_file_name
+from core.db import insert_chunks_batch, delete_by_file, get_existing_cv_id_by_file_name
 
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # ---------------------------------------------------------------------------
 # Jina v5 embedding endpoint (llama-server)
@@ -84,8 +86,8 @@ def generate_embeddings(texts: list[str], prefix: str = "Document: ") -> list[li
 
 def _load_section_headings() -> list[str]:
     """Load CV section headings from sections_config.json."""
-    config_path = os.path.join(os.path.dirname(__file__), "sections_config.json")
-    if not os.path.isfile(config_path):
+    config_path = PROJECT_ROOT / "sections_config.json"
+    if not config_path.is_file():
         raise FileNotFoundError(
             f"Section config not found: {config_path}\n"
             "Please create sections_config.json with a 'section_headings' list."
