@@ -6,6 +6,26 @@ Text normalization, cleanup, and helper functions for document processing.
 import re
 import unicodedata
 
+CATEGORY_GROUPS = {
+    "Summary": ["summary", "profile", "about", "objective", "professional summary", "career objective", "executive summary"],
+    "Experience": ["experience", "employment", "work history", "professional experience", "professional background"],
+    "Education": ["education", "academic", "qualifications", "degree", "university", "college", "studies"],
+    "Skills": ["skills", "technical skills", "core competencies", "key skills", "proficiencies", "stack", "tools"],
+    "Projects": ["projects", "personal projects", "technical projects", "key projects"],
+    "Courses": ["courses", "training"],
+    "Certifications": ["certifications", "certificates", "licenses", "awards"],
+    "Languages": ["languages", "translation", "fluency"]
+}
+
+def normalize_section(name: str) -> str:
+    """Normalize a section name to its primary category using CATEGORY_GROUPS."""
+    name_clean = name.strip().lower()
+    for category, aliases in CATEGORY_GROUPS.items():
+        if any(alias in name_clean for alias in aliases):
+            return category
+    return name
+
+
 
 def clean_extracted_text(text: str) -> str:
     """

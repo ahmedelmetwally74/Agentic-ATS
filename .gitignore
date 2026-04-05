@@ -33,3 +33,8 @@ install_pgvector.bat
 .gitignore
 models
 llama.cpp
+.claude
+CLAUDE.md
+requirements.json
+debug_db.py
+Reports/

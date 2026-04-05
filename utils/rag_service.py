@@ -5,8 +5,8 @@ Retrieval and context formatting for LLM consumption.
 
 import logging
 
-from db import search_similar
-from embedding_service import generate_embedding
+from utils.db import search_similar
+from utils.embedding_service import generate_embedding
 
 logger = logging.getLogger(__name__)
 

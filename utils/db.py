@@ -3,6 +3,7 @@ AgenticATS - Database Layer
 PostgreSQL + pgvector connection management, schema init, and vector search.
 """
 
+import ast
 import os
 import logging
 
@@ -251,5 +252,33 @@ def search_best_chunk_for_cv(cv_id: str, query_embedding: list[float]) -> dict |
                 "chunk_text": row[5],
                 "similarity": float(row[6]),
             }
+    finally:
+        conn.close()
+
+
+def get_all_chunks_for_cv(cv_id: str) -> list[dict]:
+    """
+    Retrieve all chunks for a specific CV to provide full context for deep analysis.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT chunk_index, chunk_text, section_name, embedding
+                FROM cv_chunks
+                WHERE cv_id = %s
+                ORDER BY chunk_index ASC
+            """, (cv_id,))
+            rows = cur.fetchall()
+            return [
+                {
+                    "chunk_index": r[0],
+                    "chunk_text": r[1],
+                    "section_name": r[2],
+                    "embedding": ast.literal_eval(r[3]) if isinstance(r[3], str) else r[3],
+                    "similarity": 1.0  # Default similarity for full context retrieve
+                }
+                for r in rows
+            ]
     finally:
         conn.close()

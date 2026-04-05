@@ -11,7 +11,7 @@ import uuid
 
 import requests
 
-from db import insert_chunks_batch, delete_by_file
+from utils.db import insert_chunks_batch, delete_by_file
 
 
 logger = logging.getLogger(__name__)
@@ -221,6 +221,8 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
         Tuple of (cv_id, chunk_count).
     """
     from main import extract_text  # import here to avoid circular imports
+    from llm_service import semantic_chunk_section
+    from document_utils import normalize_section
 
     file_name = os.path.basename(file_path)
     print(f"\n[INGEST] Starting ingestion for: {file_name}")
@@ -231,17 +233,27 @@ def ingest_cv(file_path: str, replace_existing: bool = True) -> tuple[str, int]:
 
     # Step 2: Parse sections
     sections = parse_cv_sections(text)
+    
 
     # Step 3: Sub-chunk and prepare records
     records = []
     cv_id = str(uuid.uuid4())
+    heavy_sections = ["Experience", "Projects", "Education", "Certifications", "Courses"]
+    
     for section in sections:
-        chunks = sub_chunk(section["text"])
+        section["section_name"] = normalize_section(section["section_name"])
+        # Use LLM semantic chunking for complex sections, naive for simple ones
+        if any(h in section["section_name"] for h in heavy_sections):
+            print(f"[INGEST] Applying semantic chunking to section: {section['section_name']}")
+            chunks = semantic_chunk_section(section["section_name"], section["text"])
+        else:
+            chunks = sub_chunk(section["text"])
+            
         for idx, chunk_text in enumerate(chunks):
             records.append({
                 "cv_id": cv_id,
                 "file_name": file_name,
-                "section_name": section["section_name"],
+                "section_name": normalize_section(section["section_name"]),
                 "chunk_index": idx,
                 "chunk_text": chunk_text,
             })

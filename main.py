@@ -1,16 +1,17 @@
 """
 AgenticATS - Main Entry Point
 Extract text from PDF or Word documents, embed into PostgreSQL, and search via RAG.
-Supports two analysis modes: employer (candidate ranking) and client (CV improvement).
+Supports two analysis modes: company (candidate ranking) and applicant (CV improvement).
 
 Usage:
     python main.py <file_path>                              # Extract text only
     python main.py <file_path> --embed                      # Extract + embed + store (single file)
     python main.py --embed <folder_path>                    # Embed all CVs in a folder
     python main.py --search "query text"                    # RAG search
-    python main.py --mode employer --jd-file job.txt        # Employer: rank candidates + interview questions
-    python main.py --mode client --jd-file job.txt          # Client: CV improvement suggestions
+    python main.py --mode company --jd-file job.txt          # Company: rank candidates + interview questions
+    python main.py --mode applicant --jd-file job.txt       # Applicant: CV improvement suggestions
     python main.py --init-db                                # Initialize database
+    python main.py --process-jd --input job.txt --output reqs.json   # Pre-process JD
 """
 
 import argparse
@@ -33,16 +34,13 @@ def _clean_text(text: str) -> str:
     cleaned = "".join(c for c in cleaned if c.isprintable())
     return cleaned.strip()
 
-from document_service import (
+from utils.document_service import (
     extract_text_from_pdf_sync,
     extract_text_from_word,
     pdf_has_text,
     save_text_to_docx,
 )
-from document_utils import normalize_text_basic, clean_extracted_text
-
-# Load environment variables from .env file
-load_dotenv()
+from utils.document_utils import normalize_text_basic, clean_extracted_text
 
 
 def extract_text(file_path: str) -> str:
@@ -148,14 +146,33 @@ def main():
         type=str,
         default=None,
         metavar="PATH",
-        help="Read the job description from a text file and rank candidates",
+        help="Read the job description from a text file",
+    )
+    parser.add_argument(
+        "--requirements-file",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Read pre-processed requirements from a JSON file (from --process-jd)",
     )
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["employer", "client"],
+        choices=["company", "applicant"],
         default=None,
-        help="Analysis mode: 'employer' for candidate ranking or 'client' for CV improvement",
+        help="Analysis mode: 'company' for candidate ranking or 'applicant' for CV improvement",
+    )
+    parser.add_argument(
+        "--process-jd",
+        action="store_true",
+        help="Process a JD file and output pre-processed requirements JSON",
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Input file for --process-jd",
     )
     parser.add_argument(
         "--top-candidates",
@@ -172,7 +189,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default=".",
+        default="./Reports",
         metavar="DIR",
         help="Directory to save PDF analysis reports (default: current directory)",
     )
@@ -185,34 +202,61 @@ def main():
     args = parser.parse_args()
 
     try:
+        # --- Process JD (deterministic mode) ---
+        if args.process_jd:
+            from utils.jd_processor import process_jd_file, save_requirements
+            if not args.input or not args.output:
+                parser.error("--process-jd requires --input and --output")
+            if not os.path.isfile(args.input):
+                raise FileNotFoundError(f"Input file not found: {args.input}")
+            result = process_jd_file(args.input)
+            print(f"\nExtracted {len(result['requirements'])} requirements:")
+            for idx, req in enumerate(result["requirements"], 1):
+                print(f"  {idx}. {req[:80]}{'...' if len(req) > 80 else ''}")
+            save_requirements(result, args.output)
+            print("\nDone!")
+            return
+
         # --- Init Database ---
         if args.init_db:
-            from db import init_db
+            from utils.db import init_db
             init_db()
             return
 
         # --- Candidate Matching ---
-        if args.match_job or args.jd_file:
-            if args.match_job and args.jd_file:
-                parser.error("Use either --match-job or --jd-file, not both.")
-
+        if args.match_job or args.jd_file or args.requirements_file:
             if not args.mode:
-                parser.error("--mode is required for matching. Use --mode employer or --mode client.")
+                parser.error("--mode is required for matching. Use --mode company or --mode applicant.")
 
-            job_description = args.match_job
+            job_description = None
+            preprocessed_requirements = None
+
+            # Load pre-processed requirements if provided
+            if args.requirements_file:
+                if not os.path.isfile(args.requirements_file):
+                    raise FileNotFoundError(f"Requirements file not found: {args.requirements_file}")
+                from utils.jd_processor import load_requirements
+                preprocessed_requirements = load_requirements(args.requirements_file)
+                print(f"[INFO] Loaded pre-processed requirements from: {args.requirements_file}")
+
+            # Load JD from file or inline
             if args.jd_file:
                 if not os.path.isfile(args.jd_file):
                     raise FileNotFoundError(f"Job description file not found: {args.jd_file}")
                 with open(args.jd_file, "r", encoding="utf-8") as f:
                     job_description = f.read().strip()
 
-            if not job_description:
-                parser.error("A non-empty job description is required.")
+            if args.match_job:
+                job_description = args.match_job
 
-            from matching_service import match_candidates
+            if not job_description and not preprocessed_requirements:
+                parser.error("A job description (--jd-file or --match-job) or pre-processed requirements (--requirements-file) is required.")
+
+            from company.matching_service import match_candidates
 
             result = match_candidates(
                 job_description=job_description,
+                preprocessed_requirements=preprocessed_requirements,
                 top_candidates=args.top_candidates,
                 pool_size=args.pool_size,
                 section_filter=args.section,
@@ -229,12 +273,9 @@ def main():
 
             if result.get("requirements"):
                 print("\n[Extracted Job Requirements]")
-                for section, reqs in result["requirements"].items():
-                    if reqs:
-                        print(f"  {section}:")
-                        for req in reqs:
-                            print(f"    - {_clean_text(req)}")
-            
+                for req in result["requirements"]:
+                    print(f"  - {_clean_text(req)}")
+
             if result.get("jd_report"):
                 print(f"\nJD Analysis Report: {_clean_text(result['jd_report'])}")
 
@@ -247,7 +288,11 @@ def main():
                     print(f"File: {candidate['file_name']}")
                     print(f"CV ID: {candidate['cv_id']}")
                     print(f"Score: {candidate['score']:.4f}")
-                    print("Matched sections: " + _clean_text(", ".join(candidate["matched_sections"])))
+                    if "detailed_sections" in candidate:
+                        print("Matched sections: " + _clean_text(", ".join(candidate["detailed_sections"].keys())))
+                    if "weighted_score" in candidate.get("detailed_sections", {}).get("Job Requirements Match", {}):
+                        ws = candidate["detailed_sections"]["Job Requirements Match"]["weighted_score"]
+                        print(f"  (weighted_score={ws:.4f})")
 
                     print(f"\n[Summary]\n{_clean_text(candidate.get('summary', ''))}")
 
@@ -255,7 +300,7 @@ def main():
                     for reason in candidate.get("reasons", []):
                         print(f"  * {_clean_text(reason)}")
 
-                    if args.mode == "employer":
+                    if args.mode == "company":
                         print("\n[Interview Questions]")
                         for q in candidate.get("questions", []):
                             print(f"  ? {_clean_text(q)}")
@@ -277,7 +322,7 @@ def main():
 
         # --- RAG Search ---
         if args.search:
-            from rag_service import rag_query
+            from utils.rag_service import rag_query
             result = rag_query(args.search, top_k=args.top_k,
                                section_filter=args.section)
 
@@ -301,7 +346,7 @@ def main():
 
             if os.path.isdir(embed_path):
                 # Folder mode: ingest all CVs in the directory
-                from embedding_service import ingest_cv_folder
+                from utils.embedding_service import ingest_cv_folder
                 results = ingest_cv_folder(embed_path)
 
                 print("\n" + "=" * 60)
@@ -313,7 +358,7 @@ def main():
                 print("=" * 60)
             elif os.path.isfile(embed_path):
                 # Single file mode
-                from embedding_service import ingest_cv
+                from utils.embedding_service import ingest_cv
                 cv_id, chunk_count = ingest_cv(embed_path)
                 print(f"\n[SUCCESS] Ingested {chunk_count} chunks into the database. (CV ID: {cv_id})")
             else:
